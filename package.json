@@ -1,0 +1,19 @@
+{
+  "name": "mempact",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Faithful TypeScript port of the OpenAI Codex CLI compaction engine (\"Memento\"), as a zero-dependency core library plus a pi coding-agent extension.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.78.0",
+    "@types/node": "^26.1.0",
+    "typebox": "^1.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

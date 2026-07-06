@@ -1,0 +1,10 @@
+mempact
+Copyright 2026 mempact contributors
+
+This project includes code, prompts, constants, and algorithms derived from
+OpenAI Codex CLI (https://github.com/openai/codex), tag rust-v0.142.5,
+commit 26de83050b20f7e0ee211b9739e52ae00ce8032a, licensed under the
+Apache License 2.0.
+
+OpenAI Codex
+Copyright 2025 OpenAI
