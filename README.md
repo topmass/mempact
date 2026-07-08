@@ -111,12 +111,14 @@ disabled to get the pure port back:
    truth, and grading are all fixed harness-side, so an arbitrarily weak
    model can run the process safely - it never authors a rule.
 
-   Measured on a real 27B local model (Qwen3.6 NVFP4) quizzed over a ~70k
-   token slice of a real coding session (`test/handoff-eval.ts`, works with
-   any Claude Code transcript + OpenAI-compatible endpoint): raw summary
-   alone 0-33% of probes, + mechanical splices 67%, full mempact assembly
-   **100%** - handoff quality becomes nearly independent of summarizer
-   diligence.
+   Measured with `test/handoff-eval.ts` (accepts Claude Code transcripts
+   AND codex rollout files, format auto-detected, any OpenAI-compatible
+   endpoint) on a real 27B local model (Qwen3.6 NVFP4) over ~70k-token
+   slices of 7 real coding sessions (4 Claude Code, 3 codex): raw summary
+   alone averaged **5%** of probes, + mechanical splices 33%, full mempact
+   assembly 62% first-try, and the MUST-PRESERVE retry lifted most sessions
+   to **100%**. The full handoff consistently measured 1.1-2.9k tokens -
+   1.7-4.2% of the window content it replaced.
 
 ## Installing the pi extension
 

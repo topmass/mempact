@@ -87,7 +87,7 @@ const tokenGroups = (text: string, fraction: number): { groups: string[][]; minG
   return { groups, minGroups: Math.max(1, Math.ceil(fraction * groups.length)) };
 };
 
-const SUCCESS_WORDS = ["succeed", "success", "passed", "pass", "exit 0", "exit code 0", "worked", "no error"];
+const SUCCESS_WORDS = ["succeed", "success", "passed", "pass", "exit 0", "exit code 0", "worked", "no error", "completed", "created", "done", "without error"];
 const FAILURE_WORDS = ["fail", "error", "non-zero", "nonzero", "crash", "broke"];
 
 /**
@@ -107,7 +107,9 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
         const base = f.split("/").pop();
         return base && base !== f ? [f, base] : [f];
       }),
-      minGroups: files.length,
+      // 80%: recalling 8+ of 10 paths is a working handoff; all-or-nothing
+      // failed answers that listed 9/10 (batch eval)
+      minGroups: Math.max(1, Math.ceil(files.length * 0.8)),
       preserveLine: `Modified files (list each explicitly): ${files.join(", ")}`,
     });
   }
@@ -123,7 +125,8 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
     const commandAlts = [command, ...rareTokens(command, 3)];
     probes.push({
       id: "verify",
-      question: "What was the most recent command or test run, and did it succeed or fail?",
+      question:
+        "What was the last significant command run (for example a test, build, or deploy), and did it succeed or fail?",
       groups: [commandAlts, statusWords],
       minGroups: 2,
       preserveLine: `Last command run: \`${command}\` -> ${failed ? `FAILED${exit != null ? ` (exit ${exit})` : ""}` : "succeeded"}`,
@@ -146,7 +149,10 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
     if (groups.length > 0)
       probes.push({
         id: "intent",
-        question: "What is the user's most recent request? Quote or closely paraphrase it.",
+        // demands a QUOTE: paraphrases of generic sentences cannot pass
+        // containment grading (batch eval on real transcripts proved this)
+        question:
+          "Find the LAST message written by the user in the record above and quote it word-for-word, or as close as possible.",
         groups,
         minGroups,
         preserveLine: `Latest user request (verbatim): "${clipLine(facts.lastUserMessage, 300)}"`,
@@ -204,6 +210,7 @@ export const QUIZ_INSTRUCTION = [
   "Answer the questions below using ONLY that record. Do not use outside knowledge. Do not guess.",
   "If the record does not contain an answer, reply UNKNOWN for that question.",
   "Answer in numbered lines, one per question. Be specific: include exact file paths, commands, and error text where relevant.",
+  "When a question asks you to quote, copy the exact words from the record.",
 ].join("\n");
 
 export function formatQuiz(probes: readonly Probe[]): string {
@@ -269,7 +276,8 @@ const textOfBlocks = (content: unknown): string =>
       : "";
 
 const sniffExit = (text: string): number | undefined => {
-  const m = text.match(/exit(?:\s+code)?[:=\s]+(-?\d+)/i);
+  // matches "exit code: 1", "exit 0", "exited with code 0" (codex phrasing)
+  const m = text.match(/exit(?:ed)?(?:\s+with)?(?:\s+code)?[:=\s]+(-?\d+)/i);
   return m ? Number(m[1]) : undefined;
 };
 
@@ -283,12 +291,19 @@ export function extractRunFacts(messages: readonly MessageLike[]): {
   for (const m of messages) {
     if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
     for (const block of m.content as { type: string; id?: string; name?: string; arguments?: Record<string, unknown> }[]) {
-      if (block.type === "toolCall" && block.id && typeof block.arguments?.command === "string")
-        commandsById.set(block.id, block.arguments.command);
+      if (block.type !== "toolCall" || !block.id) continue;
+      const raw = block.arguments?.command ?? block.arguments?.cmd; // codex uses "cmd"
+      const command = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.join(" ") : undefined;
+      if (command) commandsById.set(block.id, command);
     }
   }
 
+  // Prefer the newest SIGNIFICANT command (test/build/deploy family): the
+  // literal last command is often housekeeping trivia no honest summary
+  // would mention (batch eval on real transcripts proved this).
+  const SIGNIFICANT = /test|vitest|jest|pytest|build|tsc|typecheck|lint|deploy|compile|check|install|migrate/i;
   let lastRun: RunFact | undefined;
+  let significantRun: RunFact | undefined;
   let lastError: string | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
@@ -299,18 +314,20 @@ export function extractRunFacts(messages: readonly MessageLike[]): {
       if (m.isError || (exit != null && exit !== 0)) lastError = clipLine(text);
       else lastError = ""; // newest result is fine -> no unresolved error
     }
-    if (!lastRun && /bash|shell|exec|run|terminal|command/i.test(m.toolName ?? "")) {
+    if (!significantRun && /bash|shell|exec|run|terminal|command/i.test(m.toolName ?? "")) {
       const command = (m.toolCallId && commandsById.get(m.toolCallId)) || undefined;
       if (command) {
-        lastRun = {
+        const run: RunFact = {
           command: clipLine(command, 160),
           exit: sniffExit(text),
           isError: m.isError ?? false,
           firstLine: clipLine(text),
         };
+        lastRun ??= run;
+        if (SIGNIFICANT.test(command)) significantRun = run;
       }
     }
-    if (lastRun && lastError !== undefined) break;
+    if (significantRun && lastError !== undefined) break;
   }
-  return { lastRun, lastError: lastError || undefined };
+  return { lastRun: significantRun ?? lastRun, lastError: lastError || undefined };
 }

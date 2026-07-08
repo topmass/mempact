@@ -101,4 +101,23 @@ describe("extractRunFacts", () => {
     const ok = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "read", isError: false, content: [{ type: "text", text: "file contents" }] }];
     expect(extractRunFacts(ok).lastError).toBeUndefined();
   });
+
+  it("prefers the newest significant command over housekeeping trivia", () => {
+    const msgs = [
+      { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "pnpm vitest run" } }] },
+      { role: "toolResult", toolCallId: "t1", toolName: "bash", isError: false, content: [{ type: "text", text: "all passed\nexit code: 0" }] },
+      { role: "assistant", content: [{ type: "toolCall", id: "t2", name: "bash", arguments: { command: "gh pr ready 1400 --undo | tail -1" } }] },
+      { role: "toolResult", toolCallId: "t2", toolName: "bash", isError: false, content: [{ type: "text", text: "ok" }] },
+    ];
+    expect(extractRunFacts(msgs).lastRun?.command).toBe("pnpm vitest run");
+  });
+
+  it("handles codex shapes: cmd key and 'exited with code' phrasing", () => {
+    const codex = [
+      { role: "assistant", content: [{ type: "toolCall", id: "x1", name: "exec_command", arguments: { cmd: "rg --files" } }] },
+      { role: "toolResult", toolCallId: "x1", toolName: "exec_command", isError: false, content: [{ type: "text", text: "Process exited with code 1\nno matches" }] },
+    ];
+    const { lastRun } = extractRunFacts(codex);
+    expect(lastRun).toMatchObject({ command: "rg --files", exit: 1 });
+  });
 });
