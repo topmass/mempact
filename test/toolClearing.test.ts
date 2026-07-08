@@ -57,7 +57,7 @@ describe("mechanical tool-output clearing", () => {
   });
 
   it("clips absurd first lines in the stub", () => {
-    expect(clearedStub("x".repeat(500)).length).toBeLessThan(250);
+    expect(clearedStub("x".repeat(500)).length).toBeLessThan(300);
     expect(clearedStub("")).toBe(`${CLEARED_OUTPUT_NOTE}]`);
   });
 });

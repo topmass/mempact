@@ -44,6 +44,10 @@ createServer((req, res) => {
         toolCall = { id: `call_nc${Date.now()}`, name: "new_context", arguments: "{}" };
       else if (lastText.includes("USE_BASH_BIG"))
         toolCall = { id: `call_bb${Date.now()}`, name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
+      else if (lastText.includes("USE_READ_FILE"))
+        toolCall = { id: `call_rf${Date.now()}`, name: "read", arguments: JSON.stringify({ path: "notes.txt" }) };
+      else if (lastText.includes("USE_RECALL"))
+        toolCall = { id: `call_rc${Date.now()}`, name: "recall", arguments: JSON.stringify({ query: "18001" }) };
       else if (lastText.includes("USE_UPDATE_MEMORY"))
         toolCall = {
           id: `call_um${Date.now()}`,

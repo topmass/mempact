@@ -13,7 +13,8 @@
  * friendly); only the boundary near the tail moves.
  */
 
-export const CLEARED_OUTPUT_NOTE = "[tool output cleared by mempact to free context";
+export const CLEARED_OUTPUT_NOTE =
+  "[tool output cleared by mempact to free context (recall tool has the full text)";
 
 export interface ClearableMessage {
   role: string;

@@ -5,7 +5,7 @@
 <p align="center">
   <a href="reference/PIN.md"><img alt="ported from openai/codex rust-v0.142.5" src="https://img.shields.io/badge/ported%20from-openai%2Fcodex%20rust--v0.142.5-c53a1f"></a>
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
-  <img alt="tests: 94 passing" src="https://img.shields.io/badge/tests-94%20passing-201b15">
+  <img alt="tests: 102 passing" src="https://img.shields.io/badge/tests-102%20passing-201b15">
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
 </p>
 
@@ -55,10 +55,10 @@ compacted-history post-filter - are ported in `core/remoteRetention.ts`.
 The server contracts themselves (`POST responses/compact`,
 `CompactionTrigger` sentinel) need OpenAI's backend and are not ported.
 
-## Beyond the port: two research-backed additions
+## Beyond the port: research-backed additions
 
-Both sit AROUND the codex base, are non-destructive, and can be disabled to
-get the pure port back:
+All of these sit AROUND the codex base, are non-destructive, and can be
+disabled to get the pure port back:
 
 1. **Mechanical tool-output clearing** (`core/toolClearing.ts`; Anthropic
    context-editing lineage - clearing stale tool results mechanically beats
@@ -77,6 +77,29 @@ get the pure port back:
    compaction and restarts by construction. The injected render strips hint
    comments and tail-caps long sections; the file keeps everything. No file,
    no overhead: nothing is injected until the model (or you) writes one.
+3. **`recall` tool** (`core/recall.ts`; Claude Code microcompaction / Cursor
+   "context as files" lineage). Searches the full append-only session
+   history - including compacted-away turns and cleared tool outputs - so
+   clearing and compaction are demotions, never deletions. Cleared stubs
+   point the model at it.
+4. **Deterministic file-op lists** (`core/fileOps.ts`; pi lineage). Read and
+   modified file paths are extracted mechanically from toolCalls, merged
+   cumulatively across compactions (capped at 40 each), and appended to
+   every summary as `<read-files>`/`<modified-files>` - file state is the
+   worst-measured summarization failure (Factory probe eval ~2.2/5) and
+   this fixes it at zero LLM cost.
+5. **Stale-intent guard** (Hermes lineage). One fixed note appended AFTER
+   the verbatim codex bridge telling the model the summary is reference,
+   not instructions - the recurring cross-agent failure is summaries
+   hijacking behavior, not information loss. The codex prompt itself is
+   never modified.
+6. **Pre-compaction memory flush nudge** (OpenClaw lineage). When a memory
+   file exists, the one-shot token-budget reminder also instructs the model
+   to persist durable state via `update_memory` before compaction hits.
+7. **Anti-thrashing guard** (Hermes lineage). If the last two compactions
+   each freed <10%, the auto trigger pauses with a warning instead of
+   looping; manual `/compact`, overflow recovery, and `new_context` stay
+   live.
 
 ## Installing the pi extension
 

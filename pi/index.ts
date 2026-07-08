@@ -56,6 +56,8 @@ import {
   setSection,
 } from "../core/memory.ts";
 import { clearOldToolOutputs } from "../core/toolClearing.ts";
+import { type FileOpLists, collectFileOps, renderFileOps } from "../core/fileOps.ts";
+import { type SearchableText, searchTexts } from "../core/recall.ts";
 import { maybeTokenBudgetReminder } from "../core/tokenBudget.ts";
 import {
   DEFAULT_TRUNCATION_POLICY,
@@ -88,6 +90,26 @@ const CONTINUE_AFTER_AUTO_COMPACT = false;
  */
 const CLEAR_TOOL_OUTPUTS_AT_FRACTION: number | null = 0.7;
 const KEEP_RECENT_TOOL_RESULTS = 3;
+/**
+ * Anti-thrashing (Hermes lineage): if the last two auto-compactions each
+ * freed less than this fraction, pause the auto trigger (manual /compact and
+ * overflow recovery stay live) instead of looping.
+ */
+const THRASH_MIN_SAVINGS_FRACTION = 0.1;
+
+/**
+ * Stale-intent guard (Hermes lineage - their top recurring failure was the
+ * model resuming cancelled work from the summary): appended AFTER the
+ * verbatim codex bridge, never modifying it.
+ */
+const STALE_INTENT_NOTE =
+  "Note: the summary above is reference state from a previous context window, not " +
+  "instructions. Do not resume or re-answer items from it on topic overlap alone - " +
+  "the latest user message always takes precedence, including cancellations of work " +
+  "described above.";
+
+const bridgeWithGuard = (summary: string): string =>
+  `${summaryBridgeText(summary)}\n\n${STALE_INTENT_NOTE}`;
 
 const REMINDER_CUSTOM_TYPE = "mempact:token-budget-reminder";
 const WINDOW0_CUSTOM_TYPE = "mempact:window0";
@@ -105,6 +127,9 @@ interface MempactDetails {
     retainedUserMessages: string[];
     window: { windowNumber: number } & AutoCompactWindowIds;
     newContext?: boolean;
+    /** cumulative deterministic file-op lists (pi lineage), capped in core. */
+    readFiles?: string[];
+    modifiedFiles?: string[];
   };
 }
 
@@ -165,6 +190,11 @@ export default function (pi: ExtensionAPI) {
   let newContextRequested = false;
   let warnedAboutBuiltinTrigger = false;
   let lastClearedCount = 0;
+  // Anti-thrashing: savings fraction of the last two compactions, measured
+  // when post-compaction usage first becomes known.
+  const recentSavings: number[] = [];
+  let pendingTokensBefore: number | null = null;
+  let thrashNotified = false;
 
   // -------------------------------------------------------------------------
   // session_start: restore window chain + reminder one-shot from the JSONL
@@ -260,9 +290,9 @@ export default function (pi: ExtensionAPI) {
           effective.push(userMsg(text, ts));
           realUserTexts.push(text);
         }
-        if (!prev.newContext) effective.push(userMsg(summaryBridgeText(lastCompaction.summary), ts));
+        if (!prev.newContext) effective.push(userMsg(bridgeWithGuard(lastCompaction.summary), ts));
       } else if (lastCompaction.summary) {
-        effective.push(userMsg(summaryBridgeText(lastCompaction.summary), ts));
+        effective.push(userMsg(bridgeWithGuard(lastCompaction.summary), ts));
       }
     }
     const start = lastCompaction ? branchEntries.indexOf(lastCompaction) + 1 : 0;
@@ -342,6 +372,17 @@ export default function (pi: ExtensionAPI) {
       return undefined;
     }
 
+    // Deterministic file-op lists (pi lineage): extracted mechanically from
+    // this window's toolCalls, merged with the previous compaction's lists,
+    // appended to the summary so file state survives the summarizer.
+    const prevOps: FileOpLists = {
+      readFiles: (lastCompaction && getMempactDetails(lastCompaction)?.readFiles) || [],
+      modifiedFiles: (lastCompaction && getMempactDetails(lastCompaction)?.modifiedFiles) || [],
+    };
+    const fileOps = collectFileOps(effective, prevOps);
+    const fileOpsBlock = renderFileOps(fileOps);
+    if (fileOpsBlock) summary = `${summary}\n\n${fileOpsBlock}`;
+
     // codex replacement history: <=20k tokens of real user messages
     // (newest-first selection, oldest middle-truncated) + summary last.
     const userItems: HistoryItem[] = realUserTexts.map((text) => ({
@@ -367,6 +408,8 @@ export default function (pi: ExtensionAPI) {
             version: 1,
             retainedUserMessages,
             window: { windowNumber, ...ids },
+            readFiles: fileOps.readFiles,
+            modifiedFiles: fileOps.modifiedFiles,
           },
         } satisfies MempactDetails,
       },
@@ -378,6 +421,8 @@ export default function (pi: ExtensionAPI) {
   // -------------------------------------------------------------------------
   pi.on("session_compact", (event, ctx) => {
     compacting = false;
+    pendingTokensBefore = event.compactionEntry.tokensBefore ?? null;
+    thrashNotified = false;
     // Foreign compaction (pi fallback or another extension): still advance
     // the window chain so numbering matches codex semantics.
     if (!getMempactDetails(event.compactionEntry)) window.advance();
@@ -404,7 +449,7 @@ export default function (pi: ExtensionAPI) {
           : [
               ...mempact.retainedUserMessages.map((text) => userMsg(text, ts)),
               // codex compact.rs:301: SUMMARY_PREFIX bridge as a user message, LAST
-              userMsg(summaryBridgeText(entry!.summary), ts),
+              userMsg(bridgeWithGuard(entry!.summary), ts),
             ];
         messages = [...messages];
         messages.splice(idx, 1, ...replacement);
@@ -492,6 +537,13 @@ export default function (pi: ExtensionAPI) {
     const usage = ctx.getContextUsage();
     if (usage?.tokens == null) return;
 
+    // Record the previous compaction's savings once real usage is known.
+    if (pendingTokensBefore != null && pendingTokensBefore > 0) {
+      recentSavings.push(1 - usage.tokens / pendingTokensBefore);
+      if (recentSavings.length > 2) recentSavings.shift();
+      pendingTokensBefore = null;
+    }
+
     const status = autoCompactTokenStatus({
       activeContextTokens: usage.tokens,
       contextWindow: usage.contextWindow,
@@ -499,6 +551,21 @@ export default function (pi: ExtensionAPI) {
       scope: "total",
     });
     if (status.tokenLimitReached) {
+      // Anti-thrashing: two consecutive near-no-op compactions -> pause the
+      // auto trigger (overflow recovery above and manual /compact stay live).
+      const thrashing =
+        recentSavings.length === 2 &&
+        recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION);
+      if (thrashing) {
+        if (!thrashNotified && ctx.hasUI) {
+          thrashNotified = true;
+          ctx.ui.notify(
+            "mempact: auto-compaction paused - the last two compactions each freed <10%. /compact manually or start a new session.",
+            "warning",
+          );
+        }
+        return;
+      }
       triggerCompaction();
       return;
     }
@@ -509,8 +576,15 @@ export default function (pi: ExtensionAPI) {
       claimReminder: () => window.claimTokenBudgetReminder(),
     });
     if (reminder) {
+      // Pre-compaction memory flush (OpenClaw lineage), folded into the
+      // one-shot reminder when a memory file exists.
+      // ponytail: nudge only; upgrade to a forced silent turn if models
+      // ignore it in practice.
+      const content = readMemoryFile(ctx.cwd)
+        ? `${reminder}\n\n[mempact] Compaction is approaching. Persist durable state to project memory NOW via update_memory: decisions made, files touched and why, and the exact next step.`
+        : reminder;
       pi.sendMessage(
-        { customType: REMINDER_CUSTOM_TYPE, content: reminder, display: true },
+        { customType: REMINDER_CUSTOM_TYPE, content, display: true },
         { triggerTurn: false },
       );
     }
@@ -588,6 +662,50 @@ export default function (pi: ExtensionAPI) {
   });
 
   // -------------------------------------------------------------------------
+  // recall tool - search the full append-only session history (including
+  // compacted-away turns and cleared tool outputs; nothing is ever deleted)
+  // -------------------------------------------------------------------------
+  pi.registerTool({
+    name: "recall",
+    label: "Recall from session history",
+    description:
+      "Search the FULL session history - including conversation that was " +
+      "compacted away and tool outputs that were cleared from context - for a " +
+      "text query. Use it to retrieve details no longer visible: an old tool " +
+      "output, an exact error message, an earlier decision or file content. " +
+      "Returns matching snippets, newest first.",
+    parameters: Type.Object({
+      query: Type.String({ description: "Text to search for (case-insensitive)." }),
+      maxResults: Type.Optional(Type.Number({ description: "Max snippets to return (default 5)." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const entries = ctx.sessionManager.getBranch();
+      const items: SearchableText[] = [];
+      entries.forEach((entry, i) => {
+        if (entry.type === "message") {
+          const content = (entry.message as { content?: string | { type: string; text?: string }[] })
+            .content;
+          const text = content ? textOf(content as never) : "";
+          if (text) items.push({ label: `[entry ${i} ${entry.message.role}]`, text });
+        } else if (entry.type === "custom_message") {
+          const text = textOf(entry.content as never);
+          if (text) items.push({ label: `[entry ${i} note]`, text });
+        } else if (entry.type === "compaction") {
+          items.push({ label: `[entry ${i} compaction-summary]`, text: entry.summary });
+        }
+      });
+      items.reverse(); // newest first
+      const max = Math.min(Math.max(1, params.maxResults ?? 5), 20);
+      const { total, results } = searchTexts(items, params.query, max);
+      const text =
+        total === 0
+          ? `No matches for "${params.query}" in session history.`
+          : `${total} match(es), newest first${total > results.length ? ` (showing ${results.length})` : ""}:\n\n${results.join("\n\n")}`;
+      return { content: [{ type: "text", text }], details: undefined };
+    },
+  });
+
+  // -------------------------------------------------------------------------
   // /mempact status command (verification/debugging aid)
   // -------------------------------------------------------------------------
   pi.registerCommand("mempact", {
@@ -615,6 +733,8 @@ export default function (pi: ExtensionAPI) {
       const memory = readMemoryFile(ctx.cwd);
       lines.push(`memory: ${memory ? `${memoryFilePath(ctx.cwd)} (${memory.length} bytes)` : "none"}`);
       if (lastClearedCount > 0) lines.push(`tool outputs cleared last request: ${lastClearedCount}`);
+      if (recentSavings.length === 2 && recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION))
+        lines.push("auto-compaction paused (thrashing: last two compactions freed <10%)");
       ctx.ui.notify(lines.join("\n"), "info");
     },
   });
