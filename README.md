@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="assets/banner.png" alt="mempact — context-compaction engine ported from OpenAI Codex" width="100%">
+</p>
+
+<p align="center">
+  <a href="reference/PIN.md"><img alt="ported from openai/codex rust-v0.142.5" src="https://img.shields.io/badge/ported%20from-openai%2Fcodex%20rust--v0.142.5-c53a1f"></a>
+  <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
+  <img alt="tests: 78 passing" src="https://img.shields.io/badge/tests-78%20passing-201b15">
+  <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
+</p>
+
 # mempact
 
 A faithful TypeScript port of the OpenAI Codex CLI **compaction engine**
