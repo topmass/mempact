@@ -29,6 +29,23 @@ createServer((req, res) => {
     const msgs = parsed.messages ?? [];
     const flat = JSON.stringify(msgs);
     const isCompaction = flat.includes("CONTEXT CHECKPOINT COMPACTION");
+    // Checkride quiz: answer UNKNOWN to everything, forcing the full
+    // escalation ladder (retry, then mechanical splice) deterministically.
+    if (!isCompaction && flat.includes("Answer the questions below using ONLY")) {
+      const canned = Array.from({ length: 8 }, (_, i) => `${i + 1}. UNKNOWN`).join("\n");
+      const promptTokens = Math.ceil(flat.length / 4);
+      if (parsed.stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        sse(res, { id: "chatcmpl-quiz", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content: canned } }] });
+        sse(res, { id: "chatcmpl-quiz", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: promptTokens, completion_tokens: 30, total_tokens: promptTokens + 30 } });
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "chatcmpl-quiz", object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content: canned }, finish_reason: "stop" }], usage: { prompt_tokens: promptTokens, completion_tokens: 30, total_tokens: promptTokens + 30 } }));
+      }
+      return;
+    }
     // The mempact project-memory block is appended as the LAST user message;
     // skip it (and anything containing it) to find the real last message.
     let li = msgs.length - 1;

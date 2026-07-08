@@ -5,7 +5,7 @@
 <p align="center">
   <a href="reference/PIN.md"><img alt="ported from openai/codex rust-v0.142.5" src="https://img.shields.io/badge/ported%20from-openai%2Fcodex%20rust--v0.142.5-c53a1f"></a>
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
-  <img alt="tests: 102 passing" src="https://img.shields.io/badge/tests-102%20passing-201b15">
+  <img alt="tests: 113 passing" src="https://img.shields.io/badge/tests-113%20passing-201b15">
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
 </p>
 
@@ -100,6 +100,23 @@ disabled to get the pure port back:
    each freed <10%, the auto trigger pauses with a warning instead of
    looping; manual `/compact`, overflow recovery, and `new_context` stay
    live.
+8. **The handoff checkride** (`core/checkride.ts`) - closed-loop compaction,
+   which no other system does. Every compaction summary is quizzed against
+   facts the harness knows deterministically (modified files, last command
+   + exit, the user's latest request, memory state), graded by mechanical
+   string containment - no LLM judge. Fail once: the summary is regenerated
+   with MUST-PRESERVE lines. Fail twice: the facts are spliced in verbatim,
+   no model cooperation needed. Compaction is never blocked; the score is
+   persisted per compaction (`/mempact` shows it). Probe templates, ground
+   truth, and grading are all fixed harness-side, so an arbitrarily weak
+   model can run the process safely - it never authors a rule.
+
+   Measured on a real 27B local model (Qwen3.6 NVFP4) quizzed over a ~70k
+   token slice of a real coding session (`test/handoff-eval.ts`, works with
+   any Claude Code transcript + OpenAI-compatible endpoint): raw summary
+   alone 0-33% of probes, + mechanical splices 67%, full mempact assembly
+   **100%** - handoff quality becomes nearly independent of summarizer
+   diligence.
 
 ## Installing the pi extension
 

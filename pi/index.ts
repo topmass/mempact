@@ -52,9 +52,18 @@ import {
   MEMORY_SECTIONS,
   appendToSection,
   emptyMemory,
+  getSection,
   renderForContext,
   setSection,
 } from "../core/memory.ts";
+import {
+  buildProbes,
+  extractRunFacts,
+  formatQuiz,
+  gradeQuiz,
+  handoffFactsBlock,
+  mustPreserveSection,
+} from "../core/checkride.ts";
 import { clearOldToolOutputs } from "../core/toolClearing.ts";
 import { type FileOpLists, collectFileOps, renderFileOps } from "../core/fileOps.ts";
 import { type SearchableText, searchTexts } from "../core/recall.ts";
@@ -96,6 +105,13 @@ const KEEP_RECENT_TOOL_RESULTS = 3;
  * overflow recovery stay live) instead of looping.
  */
 const THRASH_MIN_SAVINGS_FRACTION = 0.1;
+/**
+ * Handoff checkride: quiz the assembled post-compaction context against
+ * deterministic facts; fail -> one MUST-PRESERVE regeneration; fail again ->
+ * splice the facts in mechanically. Never blocks compaction. See
+ * core/checkride.ts for the full standard.
+ */
+const CHECKRIDE_ENABLED = true;
 
 /**
  * Stale-intent guard (Hermes lineage - their top recurring failure was the
@@ -130,6 +146,8 @@ interface MempactDetails {
     /** cumulative deterministic file-op lists (pi lineage), capped in core. */
     readFiles?: string[];
     modifiedFiles?: string[];
+    /** handoff checkride outcome for this compaction */
+    checkride?: { asked: number; passed: number; failed: string[]; retried: boolean; spliced: boolean };
   };
 }
 
@@ -397,6 +415,97 @@ export default function (pi: ExtensionAPI) {
       .map((item) => messageText(item) ?? "")
       .filter((t) => t.length > 0);
 
+    // Handoff checkride: quiz the ACTUAL post-compaction context against
+    // deterministic facts. Wrapped so the safety layer can never break the
+    // compaction it protects.
+    let checkride: NonNullable<MempactDetails["mempact"]["checkride"]> | undefined;
+    if (CHECKRIDE_ENABLED) {
+      try {
+        const memoryMd = readMemoryFile(ctx.cwd);
+        const run = extractRunFacts(effective as never);
+        const probes = buildProbes({
+          modifiedFiles: fileOps.modifiedFiles,
+          lastRun: run.lastRun,
+          lastError: run.lastError,
+          lastUserMessage: realUserTexts[realUserTexts.length - 1],
+          memoryNext: memoryMd ? getSection(memoryMd, "Next") : undefined,
+          memoryDoneItems: memoryMd
+            ? getSection(memoryMd, "Plan").split("\n").filter((l) => /\[x\]/i.test(l))
+            : undefined,
+          memoryDecisions: memoryMd
+            ? getSection(memoryMd, "Decisions").split("\n").filter((l) => l.trim())
+            : undefined,
+        });
+        if (probes.length > 0) {
+          const quiz = async (candidateSummary: string) => {
+            const quizMessages: Message[] = [
+              ...retainedUserMessages.map((t) => userMsg(t, Date.now())),
+              userMsg(bridgeWithGuard(candidateSummary), Date.now()),
+              ...(memoryMd ? [userMsg(renderForContext(memoryMd), Date.now())] : []),
+              userMsg(formatQuiz(probes), Date.now()),
+            ];
+            const response = await complete(
+              ctx.model!,
+              {
+                systemPrompt: "You answer verification questions strictly from the provided record.",
+                messages: quizMessages,
+              },
+              { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: 700, signal },
+            );
+            const answer = response.content
+              .filter((c): c is TextContent => c.type === "text")
+              .map((c) => c.text)
+              .join("\n");
+            return gradeQuiz(probes, answer);
+          };
+
+          let result = await quiz(summary);
+          let retried = false;
+          let spliced = false;
+          if (result.failed.length > 0) {
+            retried = true;
+            try {
+              const retryPrompt = `${promptText}\n\n${mustPreserveSection(result.failed)}`;
+              const response = await complete(
+                ctx.model!,
+                { systemPrompt, messages: [...history, userMsg(retryPrompt, Date.now())] },
+                { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: ctx.model!.maxTokens, signal },
+              );
+              const retriedSummary = response.content
+                .filter((c): c is TextContent => c.type === "text")
+                .map((c) => c.text)
+                .join("\n");
+              if (retriedSummary.trim()) {
+                const candidate = fileOpsBlock ? `${retriedSummary}\n\n${fileOpsBlock}` : retriedSummary;
+                const second = await quiz(candidate);
+                if (second.failed.length < result.failed.length) {
+                  summary = candidate;
+                  result = second;
+                }
+              }
+            } catch {
+              // retry is best-effort; the original summary stands
+            }
+            if (result.failed.length > 0) {
+              // Mechanical splice: the facts get through without any model
+              // cooperation. Compaction ships regardless.
+              spliced = true;
+              summary = `${summary}\n\n${handoffFactsBlock(result.failed)}`;
+            }
+          }
+          checkride = {
+            asked: probes.length,
+            passed: probes.length - result.failed.length,
+            failed: result.failed.map((p) => p.id),
+            retried,
+            spliced,
+          };
+        }
+      } catch {
+        // never block compaction on verification machinery
+      }
+    }
+
     const [windowNumber, ids] = window.advance();
     return {
       compaction: {
@@ -410,6 +519,7 @@ export default function (pi: ExtensionAPI) {
             window: { windowNumber, ...ids },
             readFiles: fileOps.readFiles,
             modifiedFiles: fileOps.modifiedFiles,
+            checkride,
           },
         } satisfies MempactDetails,
       },
@@ -735,6 +845,12 @@ export default function (pi: ExtensionAPI) {
       if (lastClearedCount > 0) lines.push(`tool outputs cleared last request: ${lastClearedCount}`);
       if (recentSavings.length === 2 && recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION))
         lines.push("auto-compaction paused (thrashing: last two compactions freed <10%)");
+      const lastEntry = latestCompactionEntry(ctx.sessionManager.getBranch());
+      const cr = lastEntry ? getMempactDetails(lastEntry)?.checkride : undefined;
+      if (cr)
+        lines.push(
+          `last handoff checkride: ${cr.passed}/${cr.asked} passed${cr.retried ? ", retried" : ""}${cr.spliced ? `, spliced facts: ${cr.failed.join("/")}` : ""}`,
+        );
       ctx.ui.notify(lines.join("\n"), "info");
     },
   });

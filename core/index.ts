@@ -21,3 +21,4 @@ export * from "./memory.ts";
 export * from "./toolClearing.ts";
 export * from "./fileOps.ts";
 export * from "./recall.ts";
+export * from "./checkride.ts";
