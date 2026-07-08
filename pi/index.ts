@@ -20,6 +20,8 @@
  *   "compaction": { "enabled": false }   // disables only pi's built-in trigger
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { complete } from "@earendil-works/pi-ai";
 import type { Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type {
@@ -41,7 +43,19 @@ import {
 import type { HistoryItem } from "../core/items.ts";
 import { messageText } from "../core/items.ts";
 import { AutoCompactWindow, type AutoCompactWindowIds } from "../core/autoCompactWindow.ts";
-import { autoCompactTokenStatus, tokensUntilCompaction } from "../core/trigger.ts";
+import {
+  autoCompactTokenLimit,
+  autoCompactTokenStatus,
+  tokensUntilCompaction,
+} from "../core/trigger.ts";
+import {
+  MEMORY_SECTIONS,
+  appendToSection,
+  emptyMemory,
+  renderForContext,
+  setSection,
+} from "../core/memory.ts";
+import { clearOldToolOutputs } from "../core/toolClearing.ts";
 import { maybeTokenBudgetReminder } from "../core/tokenBudget.ts";
 import {
   DEFAULT_TRUNCATION_POLICY,
@@ -65,6 +79,15 @@ const REMINDER_THRESHOLD_TOKENS = 10_000;
  * to continue after an auto-compaction.
  */
 const CONTINUE_AFTER_AUTO_COMPACT = false;
+/**
+ * Mechanical tool-output clearing (Anthropic context-editing lineage): once
+ * context crosses this fraction of the auto-compact limit (~63% of the
+ * window at the default 90% limit), tool outputs older than the newest
+ * KEEP_RECENT_TOOL_RESULTS are stubbed per-request. Non-destructive - the
+ * session file keeps the originals. null disables the tier.
+ */
+const CLEAR_TOOL_OUTPUTS_AT_FRACTION: number | null = 0.7;
+const KEEP_RECENT_TOOL_RESULTS = 3;
 
 const REMINDER_CUSTOM_TYPE = "mempact:token-budget-reminder";
 const WINDOW0_CUSTOM_TYPE = "mempact:window0";
@@ -111,6 +134,21 @@ const textOf = (content: string | readonly { type: string; text?: string }[]): s
         .map((c) => c.text)
         .join("\n");
 
+/**
+ * Project memory (Letta/MemGPT memory-block lineage): a plain markdown file
+ * the model maintains via the update_memory tool. Injected fresh from disk
+ * on every request, so it is never part of compacted history - it survives
+ * compaction and restarts by construction. No file -> zero overhead.
+ */
+const memoryFilePath = (cwd: string): string => join(cwd, ".mempact", "memory.md");
+const readMemoryFile = (cwd: string): string | null => {
+  try {
+    return readFileSync(memoryFilePath(cwd), "utf8");
+  } catch {
+    return null;
+  }
+};
+
 /** Heuristic overflow classifier (pi does not export its internal one). */
 export const isContextOverflowError = (error: unknown): boolean => {
   const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
@@ -126,6 +164,7 @@ export default function (pi: ExtensionAPI) {
   let compacting = false;
   let newContextRequested = false;
   let warnedAboutBuiltinTrigger = false;
+  let lastClearedCount = 0;
 
   // -------------------------------------------------------------------------
   // session_start: restore window chain + reminder one-shot from the JSONL
@@ -346,28 +385,54 @@ export default function (pi: ExtensionAPI) {
   });
 
   // -------------------------------------------------------------------------
-  // context: enforce codex's exact post-compaction request layout
+  // context: enforce codex's exact post-compaction request layout, then the
+  // mechanical clearing tier, then the project-memory injection
   // -------------------------------------------------------------------------
   pi.on("context", (event, ctx) => {
-    const idx = event.messages.findIndex((m) => m.role === "compactionSummary");
-    if (idx === -1) return undefined;
+    let messages = event.messages;
 
-    const entry = latestCompactionEntry(ctx.sessionManager.getBranch());
-    const mempact = entry ? getMempactDetails(entry) : null;
-    if (!mempact) return undefined; // foreign compaction: keep pi's rendering
+    // 1) codex layout: retained user messages + SUMMARY_PREFIX bridge LAST
+    const idx = messages.findIndex((m) => m.role === "compactionSummary");
+    if (idx !== -1) {
+      const entry = latestCompactionEntry(ctx.sessionManager.getBranch());
+      const mempact = entry ? getMempactDetails(entry) : null;
+      if (mempact) {
+        const summaryMsg = messages[idx]! as { timestamp?: number };
+        const ts = summaryMsg.timestamp ?? Date.now();
+        const replacement: AgentMessage[] = mempact.newContext
+          ? []
+          : [
+              ...mempact.retainedUserMessages.map((text) => userMsg(text, ts)),
+              // codex compact.rs:301: SUMMARY_PREFIX bridge as a user message, LAST
+              userMsg(summaryBridgeText(entry!.summary), ts),
+            ];
+        messages = [...messages];
+        messages.splice(idx, 1, ...replacement);
+      }
+    }
 
-    const summaryMsg = event.messages[idx]! as { timestamp?: number };
-    const ts = summaryMsg.timestamp ?? Date.now();
-    const replacement: AgentMessage[] = mempact.newContext
-      ? []
-      : [
-          ...mempact.retainedUserMessages.map((text) => userMsg(text, ts)),
-          // codex compact.rs:301: SUMMARY_PREFIX bridge as a user message, LAST
-          userMsg(summaryBridgeText(entry!.summary), ts),
-        ];
-    const messages = [...event.messages];
-    messages.splice(idx, 1, ...replacement);
-    return { messages };
+    // 2) clearing tier: stub old tool outputs once past the threshold.
+    // usage only grows within a window, so this stays on until compaction
+    // resets it - no flapping, and stubs are byte-stable across requests.
+    if (CLEAR_TOOL_OUTPUTS_AT_FRACTION != null) {
+      const usage = ctx.getContextUsage();
+      const limit = usage ? autoCompactTokenLimit(usage.contextWindow, CONFIGURED_TOKEN_LIMIT) : null;
+      if (usage?.tokens != null && limit != null && usage.tokens >= limit * CLEAR_TOOL_OUTPUTS_AT_FRACTION) {
+        const result = clearOldToolOutputs(messages, KEEP_RECENT_TOOL_RESULTS);
+        if (result.cleared > 0) {
+          messages = result.messages;
+          lastClearedCount = result.cleared;
+        }
+      }
+    }
+
+    // 3) project memory: appended last (highest recency attention; the block
+    // is read fresh from disk so mid-session edits and compaction can't
+    // stale or drop it)
+    const memory = readMemoryFile(ctx.cwd);
+    if (memory) messages = [...messages, userMsg(renderForContext(memory), Date.now())];
+
+    return messages === event.messages ? undefined : { messages };
   });
 
   // -------------------------------------------------------------------------
@@ -488,6 +553,41 @@ export default function (pi: ExtensionAPI) {
   });
 
   // -------------------------------------------------------------------------
+  // update_memory tool - durable project memory at .mempact/memory.md
+  // -------------------------------------------------------------------------
+  pi.registerTool({
+    name: "update_memory",
+    label: "Update project memory",
+    description:
+      "Update the durable project memory (.mempact/memory.md). It is re-injected " +
+      "into context every turn and survives context compaction and restarts. " +
+      "For substantial or long-running tasks: set Goal once from the task/spec; " +
+      "keep Plan checkboxes and Next current (Next = the exact next action, " +
+      "concrete enough to act on cold); append one-line Decisions with a short " +
+      "rationale; list important Files as 'path - why it matters'. " +
+      "action 'set' replaces the whole section; 'append' adds one line.",
+    parameters: Type.Object({
+      section: Type.Union(MEMORY_SECTIONS.map((s) => Type.Literal(s))),
+      action: Type.Union([Type.Literal("set"), Type.Literal("append")]),
+      content: Type.String({ description: "Section text (set) or a single line (append)." }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const path = memoryFilePath(ctx.cwd);
+      const current = readMemoryFile(ctx.cwd) ?? emptyMemory();
+      const next =
+        params.action === "append"
+          ? appendToSection(current, params.section, params.content)
+          : setSection(current, params.section, params.content);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, next, "utf8");
+      return {
+        content: [{ type: "text", text: `Project memory updated (${params.section}).` }],
+        details: undefined,
+      };
+    },
+  });
+
+  // -------------------------------------------------------------------------
   // /mempact status command (verification/debugging aid)
   // -------------------------------------------------------------------------
   pi.registerCommand("mempact", {
@@ -512,6 +612,9 @@ export default function (pi: ExtensionAPI) {
           `until compaction: ${usage.tokens == null ? "unknown" : tokensUntilCompaction(status)}`,
         );
       }
+      const memory = readMemoryFile(ctx.cwd);
+      lines.push(`memory: ${memory ? `${memoryFilePath(ctx.cwd)} (${memory.length} bytes)` : "none"}`);
+      if (lastClearedCount > 0) lines.push(`tool outputs cleared last request: ${lastClearedCount}`);
       ctx.ui.notify(lines.join("\n"), "info");
     },
   });

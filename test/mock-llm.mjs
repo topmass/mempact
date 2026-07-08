@@ -29,22 +29,36 @@ createServer((req, res) => {
     const msgs = parsed.messages ?? [];
     const flat = JSON.stringify(msgs);
     const isCompaction = flat.includes("CONTEXT CHECKPOINT COMPACTION");
-    const lastMsg = msgs[msgs.length - 1] ?? {};
-    const lastText = JSON.stringify(lastMsg.content ?? "");
-    const hasToolResult = msgs.some((m) => m.role === "tool");
+    // The mempact project-memory block is appended as the LAST user message;
+    // skip it (and anything containing it) to find the real last message.
+    let li = msgs.length - 1;
+    while (li >= 0 && JSON.stringify(msgs[li].content ?? "").includes("<project_memory>")) li--;
+    const lastMsg = msgs[li] ?? {};
+    const lastText = JSON.stringify(lastMsg.content ?? "") + JSON.stringify((msgs[li + 1] ?? {}).content ?? "");
+    const midTurn = lastMsg.role === "tool";
 
     // Magic prompts to make the model "call" tools deterministically.
     let toolCall = null;
-    if (!isCompaction && !hasToolResult) {
+    if (!isCompaction && !midTurn) {
       if (lastText.includes("USE_NEW_CONTEXT"))
-        toolCall = { id: "call_nc1", name: "new_context", arguments: "{}" };
+        toolCall = { id: `call_nc${Date.now()}`, name: "new_context", arguments: "{}" };
       else if (lastText.includes("USE_BASH_BIG"))
-        toolCall = { id: "call_bb1", name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
+        toolCall = { id: `call_bb${Date.now()}`, name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
+      else if (lastText.includes("USE_UPDATE_MEMORY"))
+        toolCall = {
+          id: `call_um${Date.now()}`,
+          name: "update_memory",
+          arguments: JSON.stringify({
+            section: "Goal",
+            action: "set",
+            content: "Ship the live demo: verify project memory survives compaction.",
+          }),
+        };
     }
 
     const text = isCompaction
       ? "MOCK HANDOFF SUMMARY: goal X, decisions Y, next steps Z."
-      : hasToolResult
+      : midTurn
         ? "tool finished, done."
         : `ack. ${"filler word soup. ".repeat(Math.ceil((FILLER_TOKENS * 4) / 18))}`;
 

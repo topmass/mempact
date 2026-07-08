@@ -17,3 +17,5 @@ export * from "./trigger.ts";
 export * from "./tokenBudget.ts";
 export * from "./compactedItem.ts";
 export * from "./uuidv7.ts";
+export * from "./memory.ts";
+export * from "./toolClearing.ts";

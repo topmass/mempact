@@ -5,7 +5,7 @@
 <p align="center">
   <a href="reference/PIN.md"><img alt="ported from openai/codex rust-v0.142.5" src="https://img.shields.io/badge/ported%20from-openai%2Fcodex%20rust--v0.142.5-c53a1f"></a>
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
-  <img alt="tests: 78 passing" src="https://img.shields.io/badge/tests-78%20passing-201b15">
+  <img alt="tests: 94 passing" src="https://img.shields.io/badge/tests-94%20passing-201b15">
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
 </p>
 
@@ -54,6 +54,29 @@ Portable learnings from codex's remote (server-side) compaction - the
 compacted-history post-filter - are ported in `core/remoteRetention.ts`.
 The server contracts themselves (`POST responses/compact`,
 `CompactionTrigger` sentinel) need OpenAI's backend and are not ported.
+
+## Beyond the port: two research-backed additions
+
+Both sit AROUND the codex base, are non-destructive, and can be disabled to
+get the pure port back:
+
+1. **Mechanical tool-output clearing** (`core/toolClearing.ts`; Anthropic
+   context-editing lineage - clearing stale tool results mechanically beats
+   summarizing them). Once context crosses `0.7 x` the compaction limit
+   (~63% of the window), tool outputs older than the newest 3 are stubbed
+   per-request to their first line. The session file keeps the originals and
+   the tool call (name, args) stays visible, so facts survive - only prose
+   goes. Zero LLM cost; delays the expensive summarization compaction.
+   Knobs: `CLEAR_TOOL_OUTPUTS_AT_FRACTION` (null disables),
+   `KEEP_RECENT_TOOL_RESULTS` in `pi/index.ts`.
+2. **Project memory** (`core/memory.ts`; Letta/MemGPT memory-block lineage).
+   A plain markdown file at `.mempact/memory.md`
+   (Goal/Plan/Decisions/Files/Next/Open) the model maintains via the
+   `update_memory` tool. It is injected fresh from disk as the last message
+   of every request, so it is never part of compacted history - it survives
+   compaction and restarts by construction. The injected render strips hint
+   comments and tail-caps long sections; the file keeps everything. No file,
+   no overhead: nothing is injected until the model (or you) writes one.
 
 ## Installing the pi extension
 
