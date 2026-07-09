@@ -5,12 +5,12 @@
 <style>
   :root{
     --paper:#efe8da;
-    --panel:#e7dece;
     --ink:#211b15;
     --ink-soft:#6b6151;
     --line:rgba(33,27,21,.16);
     --line-strong:rgba(33,27,21,.34);
     --vermilion:#c53a1f;
+    --green:#3a6b35;
     --serif:Georgia,"Liberation Serif","Times New Roman",serif;
     --sans:"Liberation Sans","Helvetica Neue",Arial,sans-serif;
     --mono:"DejaVu Sans Mono",ui-monospace,monospace;
@@ -23,7 +23,6 @@
       radial-gradient(120% 140% at 88% -20%, #f6f0e4 0%, var(--paper) 42%, #e9e1d0 100%);
     color:var(--ink);font-family:var(--sans);
   }
-  /* faint engineering grid, very restrained */
   .banner::before{
     content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
     background-image:
@@ -34,57 +33,69 @@
             mask-image:radial-gradient(90% 90% at 78% 30%,rgba(0,0,0,.55),transparent 78%);
   }
   .frame{position:absolute;inset:40px;border:1px solid var(--line-strong)}
-  .content{position:absolute;inset:40px;padding:52px 60px;display:flex;flex-direction:column;justify-content:space-between}
+  .content{position:absolute;inset:40px;padding:48px 60px;display:flex;flex-direction:column;justify-content:space-between}
 
   /* ---- header ---- */
   .kicker{display:flex;align-items:center;gap:14px;font-size:15px;font-weight:700;
     letter-spacing:.42em;text-transform:uppercase;color:var(--vermilion)}
   .kicker .tick{width:34px;height:2px;background:var(--vermilion)}
-  .wordmark{font-family:var(--serif);font-weight:700;font-size:124px;line-height:.9;
-    letter-spacing:-.03em;margin:16px 0 0 -4px}
+  .headrow{display:flex;justify-content:space-between;align-items:flex-start}
+  .wordmark{font-family:var(--serif);font-weight:700;font-size:112px;line-height:.9;
+    letter-spacing:-.03em;margin:14px 0 0 -4px}
   .wordmark .dot{color:var(--vermilion)}
-  .lede{font-family:var(--serif);font-size:26px;line-height:1.38;color:var(--ink);
-    max-width:760px;margin-top:20px}
+  .lede{font-family:var(--serif);font-size:24px;line-height:1.4;color:var(--ink);
+    max-width:730px;margin-top:18px}
   .lede em{font-style:italic;color:var(--vermilion)}
 
-  /* ---- how it works: the fold timeline ---- */
-  .flow{margin-top:6px}
-  .flow-rail{position:relative;height:118px}
-  /* the context bar filling toward the limit */
-  .seg-row{position:absolute;left:0;bottom:44px;display:flex;gap:5px;align-items:flex-end}
-  .seg{width:15px;background:var(--ink);opacity:.86}
-  .seg.q{background:var(--ink-soft);opacity:.5}
-  /* the 90% threshold */
-  .limit{position:absolute;bottom:26px;height:96px;border-left:2px dashed var(--vermilion)}
-  .limit .cap{position:absolute;top:-4px;left:10px;font:700 13px/1 var(--sans);
-    letter-spacing:.12em;color:var(--vermilion);white-space:nowrap}
-  /* fold arrow */
-  .fold{position:absolute;bottom:64px;display:flex;align-items:center;gap:10px;color:var(--ink-soft)}
-  .fold svg{display:block}
-  /* the compact result */
-  .result{position:absolute;bottom:44px;display:flex;gap:6px;align-items:flex-end}
-  .chip{height:30px;display:flex;align-items:center;padding:0 12px;font:700 13px/1 var(--sans);
-    letter-spacing:.02em;border:1.5px solid var(--ink);color:var(--ink);background:transparent}
-  .chip.sum{background:var(--vermilion);border-color:var(--vermilion);color:#fbeee9}
-  .baseline{position:absolute;left:0;right:0;bottom:42px;border-bottom:1px solid var(--line-strong)}
-  .freed{position:absolute;right:0;bottom:50px;display:flex;align-items:baseline;gap:12px;text-align:right}
-  .freed .big{font-family:var(--serif);font-weight:700;font-size:52px;line-height:.8;color:var(--vermilion);letter-spacing:-.02em}
-  .freed .sub{font-size:13.5px;line-height:1.3;color:var(--ink-soft);letter-spacing:.02em}
+  /* ---- the checkride card, right side ---- */
+  .card{width:400px;margin-top:20px;border:1.5px solid var(--ink);background:rgba(246,240,228,.75)}
+  .card .hd{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 16px;border-bottom:1.5px solid var(--ink);
+    font:700 13px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase}
+  .card .hd .no{color:var(--vermilion)}
+  .card ul{list-style:none;padding:12px 16px 14px}
+  .card li{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+    font-family:var(--mono);font-size:14.5px;line-height:2.0;color:var(--ink)}
+  .card li .q{color:var(--ink-soft);white-space:nowrap}
+  .card li .ok{white-space:nowrap}
+  .card li .ok{color:var(--green);font-weight:700}
+  .card .foot{border-top:1px solid var(--line-strong);padding:9px 16px;
+    font:italic 700 14px/1.3 var(--serif);color:var(--vermilion)}
 
-  .steps{display:flex;gap:0;margin-top:8px;border-top:1px solid var(--line-strong)}
-  .step{flex:1;padding:16px 26px 0 0}
-  .step:not(:last-child){border-right:1px solid var(--line)}
+  /* ---- results band ---- */
+  .band{display:flex;align-items:stretch;gap:0;border-top:1px solid var(--line-strong);border-bottom:1px solid var(--line-strong)}
+  .cell{flex:1.15;padding:18px 26px 16px 0}
+  .cell:not(:first-child){padding-left:26px;border-left:1px solid var(--line)}
+  .cell h5{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px}
+  .bars{display:flex;flex-direction:column;gap:8px}
+  .barrow{display:flex;align-items:center;gap:10px;font:600 13.5px/1 var(--sans)}
+  .barrow .lbl{width:118px;color:var(--ink-soft);text-align:right}
+  .barrow .track{flex:1;height:14px;background:rgba(33,27,21,.08);display:flex}
+  .barrow .fill{height:100%;display:block}
+  .barrow .val{width:44px;font-family:var(--serif);font-weight:700;font-size:16px}
+  .f-raw{width:25%;background:var(--ink-soft)}
+  .f-spl{width:40%;background:var(--ink)}
+  .f-full{width:89%;background:var(--vermilion)}
+  .cell .big{font-family:var(--serif);font-weight:700;font-size:44px;line-height:.95;letter-spacing:-.02em}
+  .cell .big em{font-style:normal;color:var(--vermilion)}
+  .cell p{font-size:13.5px;line-height:1.45;color:var(--ink-soft);margin-top:8px}
+  .cell p b{color:var(--ink)}
+
+  /* ---- steps ---- */
+  .steps{display:flex;gap:0}
+  .step{flex:1;padding:14px 26px 0 0}
+  .step:not(:first-child){padding-left:26px;border-left:1px solid var(--line)}
   .step .n{font-family:var(--serif);font-size:15px;color:var(--vermilion);font-weight:700}
   .step h4{font-size:16px;letter-spacing:.02em;margin:5px 0 4px;color:var(--ink)}
-  .step p{font-size:14.5px;line-height:1.4;color:var(--ink-soft)}
-  .step code{font-family:var(--mono);font-size:13px;color:var(--ink);background:rgba(33,27,21,.07);padding:1px 5px}
+  .step p{font-size:14px;line-height:1.42;color:var(--ink-soft)}
+  .step code{font-family:var(--mono);font-size:12.5px;color:var(--ink);background:rgba(33,27,21,.07);padding:1px 5px}
 
   /* ---- footer meta ---- */
   .meta{display:flex;justify-content:space-between;align-items:flex-end;
     font-size:14px;color:var(--ink-soft);letter-spacing:.02em}
   .meta b{color:var(--ink);font-weight:700}
   .stamp{font:700 13px/1.35 var(--sans);letter-spacing:.14em;text-transform:uppercase;
-    color:var(--vermilion);border:1.5px solid var(--vermilion);padding:9px 13px;
+    color:var(--green);border:1.5px solid var(--green);padding:9px 13px;
     transform:rotate(-3deg);text-align:center}
 </style>
 </head>
@@ -93,74 +104,74 @@
   <div class="frame"></div>
   <div class="content">
 
-    <div>
-      <div class="kicker"><span class="tick"></span>Context-compaction engine</div>
-      <div class="wordmark">mempact<span class="dot">.</span></div>
-      <p class="lede">Codex keeps long threads alive by folding spent context into a handoff summary. <em>mempact</em> is that engine, ported to TypeScript — a zero-dependency core and a drop-in pi extension.</p>
+    <div class="headrow">
+      <div>
+        <div class="kicker"><span class="tick"></span>Verified context compaction</div>
+        <div class="wordmark">mempact<span class="dot">.</span></div>
+        <p class="lede">When a coding agent compacts its context, everything it knew rides on one unchecked summary. <em>mempact</em> carries the facts mechanically - then quizzes every handoff before trusting it.</p>
+      </div>
+      <div class="card">
+        <div class="hd"><span>Handoff checkride</span><span class="no">Nº 04</span></div>
+        <ul>
+          <li><span class="q">files modified?</span><span class="ok">core/auth.ts, db.ts&nbsp;&nbsp;PASS</span></li>
+          <li><span class="q">last command?</span><span class="ok">pnpm test, exit 0&nbsp;&nbsp;PASS</span></li>
+          <li><span class="q">user's request?</span><span class="ok">quoted verbatim&nbsp;&nbsp;PASS</span></li>
+          <li><span class="q">next step?</span><span class="ok">from memory&nbsp;&nbsp;PASS</span></li>
+        </ul>
+        <div class="foot">fail → regenerate once → splice the facts in. Never blocks.</div>
+      </div>
     </div>
 
-    <div class="flow">
-      <div class="flow-rail">
-        <div class="baseline"></div>
-        <!-- growing context -->
-        <div class="seg-row" id="segs"></div>
-        <!-- 90% limit marker -->
-        <div class="limit" style="left:452px"><span class="cap">90% OF WINDOW</span></div>
-        <!-- fold -->
-        <div class="fold" style="left:500px">
-          <svg width="86" height="26" viewBox="0 0 86 26" fill="none">
-            <path d="M2 13 H70" stroke="#6b6151" stroke-width="2"/>
-            <path d="M60 5 L72 13 L60 21" stroke="#6b6151" stroke-width="2" fill="none"/>
-          </svg>
-        </div>
-        <!-- compact result -->
-        <div class="result" style="left:610px">
-          <span class="chip">recent user msgs</span>
-          <span class="chip sum">summary</span>
-        </div>
-        <!-- payoff annotation, right-aligned -->
-        <div class="freed">
-          <span class="big">~90%</span>
-          <span class="sub">of the window<br>reclaimed</span>
+    <div class="band">
+      <div class="cell">
+        <h5>Facts surviving compaction — 14+ real sessions</h5>
+        <div class="bars">
+          <div class="barrow"><span class="lbl">summary alone</span><span class="track"><span class="fill f-raw"></span></span><span class="val">25%</span></div>
+          <div class="barrow"><span class="lbl">+ fact splices</span><span class="track"><span class="fill f-spl"></span></span><span class="val">40%</span></div>
+          <div class="barrow"><span class="lbl">mempact, verified</span><span class="track"><span class="fill f-full"></span></span><span class="val">89%+</span></div>
         </div>
       </div>
+      <div class="cell" style="flex:.7">
+        <h5>Handoff cost</h5>
+        <div class="big">~2k <em>/ 70k</em></div>
+        <p>tokens carried forward - <b>&lt;4%</b> of the window, with file state, run state, and intent intact.</p>
+      </div>
+      <div class="cell" style="flex:.7">
+        <h5>Window chains</h5>
+        <div class="big"><em>7/7</em> files</div>
+        <p>from window 1 still recalled in window 3, after <b>two</b> compactions. Summary-of-summary loses these.</p>
+      </div>
+    </div>
 
-      <div class="steps">
-        <div class="step">
-          <div class="n">01 — Fill</div>
-          <h4>The thread grows</h4>
-          <p>Every turn, tool output, and reasoning step accretes toward the model's context window.</p>
-        </div>
-        <div class="step">
-          <div class="n">02 — Compact</div>
-          <h4>Fold at the limit</h4>
-          <p>Cross 90% and the model writes a checkpoint summary of the work so far, mid-turn or on <code>/compact</code>.</p>
-        </div>
-        <div class="step">
-          <div class="n">03 — Continue</div>
-          <h4>Resume, lighter</h4>
-          <p>History becomes recent user messages plus that summary — the thread keeps going, cache-warm.</p>
-        </div>
+    <div class="steps">
+      <div class="step">
+        <div class="n">01 — Fold</div>
+        <h4>The proven base</h4>
+        <p>OpenAI Codex's compaction algorithm, ported verbatim with parity tests: fold at 90%, keep recent user messages, summary last.</p>
+      </div>
+      <div class="step">
+        <div class="n">02 — Carry</div>
+        <h4>Facts travel by machine</h4>
+        <p>Files touched, last command + exit code, memory, cleared-output skeletons - extracted mechanically, never entrusted to the summarizer.</p>
+      </div>
+      <div class="step">
+        <div class="n">03 — Verify</div>
+        <h4>Test the handoff</h4>
+        <p>Every summary is quizzed against known facts. Fail → regenerate → splice. <code>recall</code> can grep anything demoted.</p>
+      </div>
+      <div class="step">
+        <div class="n">04 — Swap in</div>
+        <h4>One settings line</h4>
+        <p>Hot-swaps the <b>pi</b> coding agent's default compaction; zero-dependency core adapts to any harness or local model.</p>
       </div>
     </div>
 
     <div class="meta">
-      <div>Faithful port of <b>openai/codex</b> &nbsp;·&nbsp; core has <b>zero runtime deps</b> &nbsp;·&nbsp; ships as a <b>pi</b> extension &nbsp;·&nbsp; Apache-2.0</div>
-      <div class="stamp">Strategy<br>“Memento”</div>
+      <div>codex core, verbatim &nbsp;·&nbsp; layers from <b>Anthropic · Letta · pi · Hermes</b> research &nbsp;·&nbsp; the checkride is ours &nbsp;·&nbsp; Apache-2.0</div>
+      <div class="stamp">Handoff<br>verified ✓</div>
     </div>
 
   </div>
 </div>
-<script>
-  // build the growing context bar: rising heights, last few faint (unwritten)
-  const row=document.getElementById('segs');
-  const heights=[18,22,20,26,24,30,28,34,32,40,38,46,44,52,50,58,56,64,62,70,26,20,16];
-  heights.forEach((h,i)=>{
-    const d=document.createElement('div');
-    d.className='seg'+(i>=20?' q':'');
-    d.style.height=h+'px';
-    row.appendChild(d);
-  });
-</script>
 </body>
 </html>
