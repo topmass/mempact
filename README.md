@@ -75,13 +75,17 @@ ENDPOINT=http://localhost:8080/v1 node test/handoff-eval.ts <session>.jsonl [mor
 
 ## Install: hot-swap pi's compaction
 
-`~/.pi/agent/settings.json`:
+```bash
+pi install git:github.com/topmass/mempact
+# or try it for one session without installing:
+pi -e git:github.com/topmass/mempact
+```
+
+Then hand compaction timing fully to mempact in
+`~/.pi/agent/settings.json` (mempact warns until you do):
 
 ```json
-{
-  "extensions": ["/path/to/mempact/pi/index.ts"],
-  "compaction": { "enabled": false }
-}
+{ "compaction": { "enabled": false } }
 ```
 
 That's the whole install - everything above is live on the next session.
