@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --paper:#efe8da; --ink:#211b15; --ink-soft:#6b6151;
+    --line:rgba(33,27,21,.16); --line-strong:rgba(33,27,21,.34);
+    --vermilion:#c53a1f; --green:#3a6b35;
+    --serif:Georgia,"Liberation Serif","Times New Roman",serif;
+    --sans:"Liberation Sans","Helvetica Neue",Arial,sans-serif;
+    --mono:"DejaVu Sans Mono",ui-monospace,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:#cdc4b2}
+  .canvas{
+    position:relative;width:1600px;height:520px;overflow:hidden;
+    background:linear-gradient(180deg,#f3ecdf 0%,var(--paper) 100%);
+    color:var(--ink);font-family:var(--sans);
+  }
+  .canvas::before{
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.4;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:48px 48px;
+  }
+  .inner{position:absolute;inset:28px;border:1px solid var(--line-strong);padding:34px 44px;display:flex;gap:52px}
+
+  .left{flex:1.35;display:flex;flex-direction:column}
+  .title{font-size:14px;font-weight:700;letter-spacing:.32em;text-transform:uppercase;color:var(--vermilion)}
+  .subtitle{font:italic 16px/1.4 var(--serif);color:var(--ink-soft);margin:8px 0 30px}
+  .bars{display:flex;flex-direction:column;gap:26px;flex:1;justify-content:center;padding-bottom:16px}
+  .row{display:flex;align-items:center;gap:18px}
+  .row .lbl{width:250px;text-align:right}
+  .row .lbl b{display:block;font-size:17px;color:var(--ink)}
+  .row .lbl span{font-size:13px;color:var(--ink-soft)}
+  .row .track{flex:1;height:34px;background:rgba(33,27,21,.08);display:flex}
+  .row .fill{height:100%;display:flex;align-items:center;justify-content:flex-end;padding-right:12px;
+    font:700 16px/1 var(--sans);color:#fbeee9}
+  .f1{width:25%;background:var(--ink-soft)}
+  .f2{width:40%;background:var(--ink)}
+  .f3{width:89%;background:var(--vermilion)}
+  .foot{font-size:13.5px;color:var(--ink-soft);border-top:1px dashed var(--line-strong);padding-top:12px}
+
+  .right{flex:.75;display:flex;flex-direction:column;gap:0;border-left:1px solid var(--line-strong);padding-left:52px}
+  .stat{flex:1;display:flex;flex-direction:column;justify-content:center}
+  .stat:not(:first-child){border-top:1px solid var(--line)}
+  .stat h5{font-size:12.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px}
+  .stat .big{font-family:var(--serif);font-weight:700;font-size:46px;line-height:.95;letter-spacing:-.02em}
+  .stat .big em{font-style:normal;color:var(--vermilion)}
+  .stat p{font-size:14px;line-height:1.45;color:var(--ink-soft);margin-top:8px}
+  .stat p b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="inner">
+    <div class="left">
+      <div class="title">Facts surviving compaction</div>
+      <div class="subtitle">Can the resuming agent name its modified files, last test result, and the user's request? Probe-graded, no LLM judge.</div>
+      <div class="bars">
+        <div class="row">
+          <div class="lbl"><b>summary alone</b><span>what naive compaction ships</span></div>
+          <div class="track"><div class="fill f1">5–25%</div></div>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>+ mechanical splices</b><span>files &amp; run state by machine</span></div>
+          <div class="track"><div class="fill f2">40%</div></div>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>mempact, verified</b><span>full assembly + checkride</span></div>
+          <div class="track"><div class="fill f3">≈90%, most 100%</div></div>
+        </div>
+      </div>
+      <div class="foot">14+ real coding sessions (Claude Code + codex transcripts), ~70k-token slices, Qwen3.6-27B local, temperature 0 — reproduce with <b>test/handoff-eval.ts</b></div>
+    </div>
+    <div class="right">
+      <div class="stat">
+        <h5>Handoff cost</h5>
+        <div class="big">~2k <em>/ 70k</em></div>
+        <p>tokens carried forward - under <b>4%</b> of the window it replaces.</p>
+      </div>
+      <div class="stat">
+        <h5>Across window chains</h5>
+        <div class="big"><em>7/7</em> files</div>
+        <p>from window 1 still recalled in window 3, after <b>two</b> compactions.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

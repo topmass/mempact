@@ -4,13 +4,9 @@
 <meta charset="utf-8">
 <style>
   :root{
-    --paper:#efe8da;
-    --ink:#211b15;
-    --ink-soft:#6b6151;
-    --line:rgba(33,27,21,.16);
-    --line-strong:rgba(33,27,21,.34);
-    --vermilion:#c53a1f;
-    --green:#3a6b35;
+    --paper:#efe8da; --ink:#211b15; --ink-soft:#6b6151;
+    --line:rgba(33,27,21,.16); --line-strong:rgba(33,27,21,.34);
+    --vermilion:#c53a1f; --green:#3a6b35;
     --serif:Georgia,"Liberation Serif","Times New Roman",serif;
     --sans:"Liberation Sans","Helvetica Neue",Arial,sans-serif;
     --mono:"DejaVu Sans Mono",ui-monospace,monospace;
@@ -19,80 +15,45 @@
   html,body{background:#cdc4b2}
   .banner{
     position:relative;width:1600px;height:700px;overflow:hidden;
-    background:
-      radial-gradient(120% 140% at 88% -20%, #f6f0e4 0%, var(--paper) 42%, #e9e1d0 100%);
+    background:radial-gradient(120% 140% at 88% -20%, #f6f0e4 0%, var(--paper) 42%, #e9e1d0 100%);
     color:var(--ink);font-family:var(--sans);
   }
   .banner::before{
     content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
-    background-image:
-      linear-gradient(var(--line) 1px,transparent 1px),
-      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
     background-size:48px 48px;
     -webkit-mask-image:radial-gradient(90% 90% at 78% 30%,rgba(0,0,0,.55),transparent 78%);
             mask-image:radial-gradient(90% 90% at 78% 30%,rgba(0,0,0,.55),transparent 78%);
   }
   .frame{position:absolute;inset:40px;border:1px solid var(--line-strong)}
-  .content{position:absolute;inset:40px;padding:48px 60px;display:flex;flex-direction:column;justify-content:space-between}
+  .content{position:absolute;inset:40px;padding:64px 72px 52px;display:flex;flex-direction:column;justify-content:space-between}
 
-  /* ---- header ---- */
-  .kicker{display:flex;align-items:center;gap:14px;font-size:15px;font-weight:700;
+  .kicker{display:flex;align-items:center;gap:14px;font-size:16px;font-weight:700;
     letter-spacing:.42em;text-transform:uppercase;color:var(--vermilion)}
   .kicker .tick{width:34px;height:2px;background:var(--vermilion)}
-  .headrow{display:flex;justify-content:space-between;align-items:flex-start}
-  .wordmark{font-family:var(--serif);font-weight:700;font-size:112px;line-height:.9;
-    letter-spacing:-.03em;margin:14px 0 0 -4px}
+  .headrow{display:flex;justify-content:space-between;align-items:center;gap:60px}
+  .wordmark{font-family:var(--serif);font-weight:700;font-size:150px;line-height:.9;
+    letter-spacing:-.03em;margin:22px 0 0 -6px}
   .wordmark .dot{color:var(--vermilion)}
-  .lede{font-family:var(--serif);font-size:24px;line-height:1.4;color:var(--ink);
-    max-width:730px;margin-top:18px}
+  .lede{font-family:var(--serif);font-size:30px;line-height:1.42;color:var(--ink);
+    max-width:780px;margin-top:30px}
   .lede em{font-style:italic;color:var(--vermilion)}
 
-  /* ---- the checkride card, right side ---- */
-  .card{width:400px;margin-top:20px;border:1.5px solid var(--ink);background:rgba(246,240,228,.75)}
+  .card{width:430px;border:1.5px solid var(--ink);background:rgba(246,240,228,.8);flex-shrink:0}
   .card .hd{display:flex;justify-content:space-between;align-items:center;
-    padding:10px 16px;border-bottom:1.5px solid var(--ink);
-    font:700 13px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase}
+    padding:12px 18px;border-bottom:1.5px solid var(--ink);
+    font:700 14px/1 var(--sans);letter-spacing:.18em;text-transform:uppercase}
   .card .hd .no{color:var(--vermilion)}
-  .card ul{list-style:none;padding:12px 16px 14px}
+  .card ul{list-style:none;padding:16px 18px 18px}
   .card li{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
-    font-family:var(--mono);font-size:14.5px;line-height:2.0;color:var(--ink)}
+    font-family:var(--mono);font-size:16px;line-height:2.2;color:var(--ink)}
   .card li .q{color:var(--ink-soft);white-space:nowrap}
-  .card li .ok{white-space:nowrap}
-  .card li .ok{color:var(--green);font-weight:700}
-  .card .foot{border-top:1px solid var(--line-strong);padding:9px 16px;
-    font:italic 700 14px/1.3 var(--serif);color:var(--vermilion)}
+  .card li .ok{color:var(--green);white-space:nowrap;font-weight:700}
+  .card .foot{border-top:1px solid var(--line-strong);padding:12px 18px;
+    font:italic 700 15.5px/1.4 var(--serif);color:var(--vermilion)}
 
-  /* ---- results band ---- */
-  .band{display:flex;align-items:stretch;gap:0;border-top:1px solid var(--line-strong);border-bottom:1px solid var(--line-strong)}
-  .cell{flex:1.15;padding:18px 26px 16px 0}
-  .cell:not(:first-child){padding-left:26px;border-left:1px solid var(--line)}
-  .cell h5{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:10px}
-  .bars{display:flex;flex-direction:column;gap:8px}
-  .barrow{display:flex;align-items:center;gap:10px;font:600 13.5px/1 var(--sans)}
-  .barrow .lbl{width:118px;color:var(--ink-soft);text-align:right}
-  .barrow .track{flex:1;height:14px;background:rgba(33,27,21,.08);display:flex}
-  .barrow .fill{height:100%;display:block}
-  .barrow .val{width:44px;font-family:var(--serif);font-weight:700;font-size:16px}
-  .f-raw{width:25%;background:var(--ink-soft)}
-  .f-spl{width:40%;background:var(--ink)}
-  .f-full{width:89%;background:var(--vermilion)}
-  .cell .big{font-family:var(--serif);font-weight:700;font-size:44px;line-height:.95;letter-spacing:-.02em}
-  .cell .big em{font-style:normal;color:var(--vermilion)}
-  .cell p{font-size:13.5px;line-height:1.45;color:var(--ink-soft);margin-top:8px}
-  .cell p b{color:var(--ink)}
-
-  /* ---- steps ---- */
-  .steps{display:flex;gap:0}
-  .step{flex:1;padding:14px 26px 0 0}
-  .step:not(:first-child){padding-left:26px;border-left:1px solid var(--line)}
-  .step .n{font-family:var(--serif);font-size:15px;color:var(--vermilion);font-weight:700}
-  .step h4{font-size:16px;letter-spacing:.02em;margin:5px 0 4px;color:var(--ink)}
-  .step p{font-size:14px;line-height:1.42;color:var(--ink-soft)}
-  .step code{font-family:var(--mono);font-size:12.5px;color:var(--ink);background:rgba(33,27,21,.07);padding:1px 5px}
-
-  /* ---- footer meta ---- */
   .meta{display:flex;justify-content:space-between;align-items:flex-end;
-    font-size:14px;color:var(--ink-soft);letter-spacing:.02em}
+    font-size:15px;color:var(--ink-soft);letter-spacing:.02em}
   .meta b{color:var(--ink);font-weight:700}
   .stamp{font:700 13px/1.35 var(--sans);letter-spacing:.14em;text-transform:uppercase;
     color:var(--green);border:1.5px solid var(--green);padding:9px 13px;
@@ -103,74 +64,27 @@
 <div class="banner">
   <div class="frame"></div>
   <div class="content">
-
     <div class="headrow">
       <div>
         <div class="kicker"><span class="tick"></span>Verified context compaction</div>
         <div class="wordmark">mempact<span class="dot">.</span></div>
-        <p class="lede">When a coding agent compacts its context, everything it knew rides on one unchecked summary. <em>mempact</em> carries the facts mechanically - then quizzes every handoff before trusting it.</p>
+        <p class="lede">Every compaction hands your agent's task to a stranger holding one unchecked note. <em>mempact</em> carries the facts by machine - and tests the handoff before trusting it.</p>
       </div>
       <div class="card">
-        <div class="hd"><span>Handoff checkride</span><span class="no">Nº 04</span></div>
+        <div class="hd"><span>Handoff checkride</span><span class="no">every compaction</span></div>
         <ul>
-          <li><span class="q">files modified?</span><span class="ok">core/auth.ts, db.ts&nbsp;&nbsp;PASS</span></li>
-          <li><span class="q">last command?</span><span class="ok">pnpm test, exit 0&nbsp;&nbsp;PASS</span></li>
-          <li><span class="q">user's request?</span><span class="ok">quoted verbatim&nbsp;&nbsp;PASS</span></li>
-          <li><span class="q">next step?</span><span class="ok">from memory&nbsp;&nbsp;PASS</span></li>
+          <li><span class="q">files modified?</span><span class="ok">core/auth.ts, db.ts  PASS</span></li>
+          <li><span class="q">last command?</span><span class="ok">pnpm test, exit 0  PASS</span></li>
+          <li><span class="q">user's request?</span><span class="ok">quoted verbatim  PASS</span></li>
+          <li><span class="q">next step?</span><span class="ok">from memory  PASS</span></li>
         </ul>
         <div class="foot">fail → regenerate once → splice the facts in. Never blocks.</div>
       </div>
     </div>
-
-    <div class="band">
-      <div class="cell">
-        <h5>Facts surviving compaction — 14+ real sessions</h5>
-        <div class="bars">
-          <div class="barrow"><span class="lbl">summary alone</span><span class="track"><span class="fill f-raw"></span></span><span class="val">25%</span></div>
-          <div class="barrow"><span class="lbl">+ fact splices</span><span class="track"><span class="fill f-spl"></span></span><span class="val">40%</span></div>
-          <div class="barrow"><span class="lbl">mempact, verified</span><span class="track"><span class="fill f-full"></span></span><span class="val">89%+</span></div>
-        </div>
-      </div>
-      <div class="cell" style="flex:.7">
-        <h5>Handoff cost</h5>
-        <div class="big">~2k <em>/ 70k</em></div>
-        <p>tokens carried forward - <b>&lt;4%</b> of the window, with file state, run state, and intent intact.</p>
-      </div>
-      <div class="cell" style="flex:.7">
-        <h5>Window chains</h5>
-        <div class="big"><em>7/7</em> files</div>
-        <p>from window 1 still recalled in window 3, after <b>two</b> compactions. Summary-of-summary loses these.</p>
-      </div>
-    </div>
-
-    <div class="steps">
-      <div class="step">
-        <div class="n">01 — Fold</div>
-        <h4>The proven base</h4>
-        <p>OpenAI Codex's compaction algorithm, ported verbatim with parity tests: fold at 90%, keep recent user messages, summary last.</p>
-      </div>
-      <div class="step">
-        <div class="n">02 — Carry</div>
-        <h4>Facts travel by machine</h4>
-        <p>Files touched, last command + exit code, memory, cleared-output skeletons - extracted mechanically, never entrusted to the summarizer.</p>
-      </div>
-      <div class="step">
-        <div class="n">03 — Verify</div>
-        <h4>Test the handoff</h4>
-        <p>Every summary is quizzed against known facts. Fail → regenerate → splice. <code>recall</code> can grep anything demoted.</p>
-      </div>
-      <div class="step">
-        <div class="n">04 — Swap in</div>
-        <h4>One settings line</h4>
-        <p>Hot-swaps the <b>pi</b> coding agent's default compaction; zero-dependency core adapts to any harness or local model.</p>
-      </div>
-    </div>
-
     <div class="meta">
-      <div>codex core, verbatim &nbsp;·&nbsp; layers from <b>Anthropic · Letta · pi · Hermes</b> research &nbsp;·&nbsp; the checkride is ours &nbsp;·&nbsp; Apache-2.0</div>
+      <div>codex fold, verbatim &nbsp;·&nbsp; facts spliced mechanically &nbsp;·&nbsp; drop-in <b>pi</b> extension &nbsp;·&nbsp; Apache-2.0</div>
       <div class="stamp">Handoff<br>verified ✓</div>
     </div>
-
   </div>
 </div>
 </body>

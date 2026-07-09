@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --paper:#efe8da; --ink:#211b15; --ink-soft:#6b6151;
+    --line:rgba(33,27,21,.16); --line-strong:rgba(33,27,21,.34);
+    --vermilion:#c53a1f; --green:#3a6b35;
+    --serif:Georgia,"Liberation Serif","Times New Roman",serif;
+    --sans:"Liberation Sans","Helvetica Neue",Arial,sans-serif;
+    --mono:"DejaVu Sans Mono",ui-monospace,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{background:#cdc4b2}
+  .canvas{
+    position:relative;width:1600px;height:480px;overflow:hidden;
+    background:linear-gradient(180deg,#f3ecdf 0%,var(--paper) 100%);
+    color:var(--ink);font-family:var(--sans);
+  }
+  .canvas::before{
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.4;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:48px 48px;
+  }
+  .inner{position:absolute;inset:28px;border:1px solid var(--line-strong);padding:34px 44px;display:flex;flex-direction:column}
+  .title{font-size:14px;font-weight:700;letter-spacing:.32em;text-transform:uppercase;color:var(--vermilion);margin-bottom:26px}
+
+  .flow{display:flex;align-items:stretch;gap:0;flex:1}
+  .stage{flex:1;display:flex;flex-direction:column}
+  .arrow{display:flex;align-items:center;padding:0 16px;color:var(--ink-soft);font-size:30px;flex-shrink:0}
+  .box{border:1.5px solid var(--ink);background:rgba(246,240,228,.85);flex:1;display:flex;flex-direction:column}
+  .box .hd{padding:10px 16px;border-bottom:1.5px solid var(--ink);display:flex;justify-content:space-between;align-items:baseline}
+  .box .hd .n{font-family:var(--serif);font-weight:700;color:var(--vermilion);font-size:15px}
+  .box .hd .t{font-weight:700;font-size:16.5px}
+  .box .bd{padding:14px 16px;font-size:14.5px;line-height:1.5;color:var(--ink-soft);flex:1}
+  .box .bd b{color:var(--ink)}
+  .box .tags{padding:0 16px 14px;display:flex;flex-wrap:wrap;gap:6px}
+  .tag{font-family:var(--mono);font-size:12.5px;color:var(--ink);background:rgba(33,27,21,.07);padding:3px 8px;white-space:nowrap}
+  .tag.red{background:var(--vermilion);color:#fbeee9}
+  .tag.green{background:var(--green);color:#eef4ed}
+  .src{margin-top:8px;padding:8px 16px 0;border-top:1px dashed var(--line-strong);font:italic 13px/1.4 var(--serif);color:var(--ink-soft)}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="inner">
+    <div class="title">How a compaction runs</div>
+    <div class="flow">
+      <div class="stage"><div class="box">
+        <div class="hd"><span class="t">Fold</span><span class="n">01</span></div>
+        <div class="bd">At <b>90%</b> of the window: keep up to 20k tokens of recent <b>user messages</b>, model writes a summary, placed <b>last</b>.</div>
+        <div class="tags"><span class="tag">codex "Memento", verbatim</span></div>
+        <div class="src">lineage: OpenAI Codex CLI, parity-tested</div>
+      </div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="box">
+        <div class="hd"><span class="t">Carry</span><span class="n">02</span></div>
+        <div class="bd">The load-bearing facts are extracted from tool calls and appended <b>mechanically</b> - never entrusted to the summarizer.</div>
+        <div class="tags"><span class="tag">&lt;modified-files&gt;</span><span class="tag">&lt;last-run&gt;</span><span class="tag">memory.md</span></div>
+        <div class="src">lineage: pi file-ops, Letta memory, Anthropic clearing</div>
+      </div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="box">
+        <div class="hd"><span class="t">Verify</span><span class="n">03</span></div>
+        <div class="bd">The assembled handoff is <b>quizzed</b> against facts the engine knows. Graded by string match - <b>no LLM judge</b>.</div>
+        <div class="tags"><span class="tag red">fail → regenerate</span><span class="tag red">fail → splice facts</span></div>
+        <div class="src">the checkride - unique to mempact</div>
+      </div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="box">
+        <div class="hd"><span class="t">Continue</span><span class="n">04</span></div>
+        <div class="bd">Next window opens at <b>&lt;4%</b> full with files, run state, and intent intact. <b>recall</b> can grep anything demoted.</div>
+        <div class="tags"><span class="tag green">handoff verified ✓</span></div>
+        <div class="src">score persisted per compaction - /mempact</div>
+      </div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
