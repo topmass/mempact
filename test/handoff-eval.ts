@@ -29,12 +29,18 @@ import {
   mustPreserveSection,
   type Probe,
 } from "../core/checkride.ts";
+import { getSection, renderForContext } from "../core/memory.ts";
 
 const ENDPOINT = process.env.ENDPOINT ?? "http://127.0.0.1:8080/v1";
 const MODEL = process.env.MODEL ?? "llamacpp";
 const TOKEN_BUDGET = Number(process.env.TOKEN_BUDGET ?? 70_000);
 const MAX_SUMMARY_TOKENS = Number(process.env.MAX_SUMMARY_TOKENS ?? 4096);
 const TOOL_RESULT_CAP = 10_000; // bytes, mirrors the engine's ingestion cap
+/** Optional .mempact/memory.md to exercise the done/next/constraints probes
+ *  (injected into the full assembly exactly as the pi extension does). */
+const MEMORY_FILE = process.env.MEMORY_FILE;
+/** CHAIN=1: two consecutive compactions; quiz window 3 on window-1 facts. */
+const CHAIN = process.env.CHAIN === "1";
 
 // ---------------------------------------------------------------------------
 // Transcript parsers -> neutral messages
@@ -271,11 +277,19 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
   const fileOps = collectFileOps(slice);
   const run = extractRunFacts(slice);
   const lastUser = [...slice].reverse().find(isRealUserMessage);
+  const memoryMd = MEMORY_FILE ? readFileSync(MEMORY_FILE, "utf8") : undefined;
   const probes = buildProbes({
     modifiedFiles: fileOps.modifiedFiles,
     lastRun: run.lastRun,
     lastError: run.lastError,
     lastUserMessage: lastUser ? textOf(lastUser) : undefined,
+    memoryNext: memoryMd ? getSection(memoryMd, "Next") : undefined,
+    memoryDoneItems: memoryMd
+      ? getSection(memoryMd, "Plan").split("\n").filter((l) => /\[x\]/i.test(l))
+      : undefined,
+    memoryDecisions: memoryMd
+      ? getSection(memoryMd, "Decisions").split("\n").filter((l) => l.trim())
+      : undefined,
   });
   if (probes.length === 0) {
     console.log("no probes derivable (no tool activity found) - skipping");
@@ -296,7 +310,11 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
     .map((item) => messageText(item) ?? "")
     .filter(Boolean);
 
-  const fullContext = [...retained, summaryBridgeText(splicedSummary)];
+  const fullContext = [
+    ...retained,
+    summaryBridgeText(splicedSummary),
+    ...(memoryMd ? [renderForContext(memoryMd)] : []),
+  ];
   const handoffTokens = tokens(fullContext.join("\n"));
   console.log(`summary ${tokens(summary)} tokens | retained user msgs ${tokens(retained.join("\n"))} tokens | full handoff ${handoffTokens} tokens (${((handoffTokens / sliceTokens) * 100).toFixed(1)}% of window content)`);
 
@@ -335,11 +353,77 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Chain mode: window1 -> compact -> window2 -> compact -> quiz window 3 on
+// WINDOW-1 facts. Tests what everyone's summary-of-summary loses: whether
+// the cumulative mechanical splice carries early-project state through
+// repeated compactions.
+// ---------------------------------------------------------------------------
+
+async function runChain(path: string): Promise<void> {
+  const all = parseTranscript(path);
+  const tail = sliceNewest(all, TOKEN_BUDGET);
+  const mid = Math.floor(tail.length / 2);
+  const s1 = tail.slice(0, mid);
+  const s2 = tail.slice(mid);
+  console.log(`\n### CHAIN ${basename(path)}: window1 ${s1.length} msgs, window2 ${s2.length} msgs`);
+
+  // window 1 -> handoff 1
+  const ops1 = collectFileOps(s1);
+  const summary1 = await chat([...toChat(s1), { role: "user", content: SUMMARIZATION_PROMPT }], MAX_SUMMARY_TOKENS);
+  const spliced1 = renderFileOps(ops1) ? `${summary1}\n\n${renderFileOps(ops1)}` : summary1;
+  const items1: HistoryItem[] = s1
+    .filter(isRealUserMessage)
+    .map((m) => ({ type: "message", role: "user", content: [{ type: "input_text", text: textOf(m) }] }));
+  const retained1 = buildCompactedHistory([], collectUserMessages(items1), summaryBridgeText(spliced1))
+    .slice(0, -1)
+    .map((item) => messageText(item) ?? "")
+    .filter(Boolean);
+
+  // window 2 = handoff1 + s2 -> handoff 2 (cumulative file ops, real engine path)
+  const ops2 = collectFileOps(s2, ops1);
+  const window2Chat = [
+    ...retained1.map((t) => ({ role: "user", content: t })),
+    { role: "user", content: summaryBridgeText(spliced1) },
+    ...toChat(s2),
+    { role: "user", content: SUMMARIZATION_PROMPT },
+  ];
+  const summary2 = await chat(window2Chat, MAX_SUMMARY_TOKENS);
+  const spliced2 = renderFileOps(ops2) ? `${summary2}\n\n${renderFileOps(ops2)}` : summary2;
+  const items2: HistoryItem[] = s2
+    .filter(isRealUserMessage)
+    .map((m) => ({ type: "message", role: "user", content: [{ type: "input_text", text: textOf(m) }] }));
+  const retained2 = buildCompactedHistory([], collectUserMessages(items2), summaryBridgeText(spliced2))
+    .slice(0, -1)
+    .map((item) => messageText(item) ?? "")
+    .filter(Boolean);
+
+  // quiz window 3 on WINDOW-1 facts only
+  const w1Files = ops1.modifiedFiles.filter((f) => !collectFileOps(s2).modifiedFiles.includes(f));
+  const probes = buildProbes({ modifiedFiles: w1Files.length > 0 ? w1Files : ops1.modifiedFiles });
+  if (probes.length === 0) {
+    console.log("no window-1 file facts to chain-test - pick a transcript with more tool activity");
+    return;
+  }
+  console.log(`window-1-only files probed: ${(w1Files.length > 0 ? w1Files : ops1.modifiedFiles).length}`);
+  const mechanical = probes[0]!.groups.filter((g) =>
+    g.some((s) => spliced2.toLowerCase().includes(s.toLowerCase())),
+  ).length;
+  console.log(`mechanically present in window-3 splice: ${mechanical}/${probes[0]!.groups.length}`);
+  const r = await quizContext([...retained2, summaryBridgeText(spliced2)], probes);
+  console.log(`window-3 quiz recall of window-1 files: ${(r.score * 100).toFixed(0)}% (${r.failed.length === 0 ? "PASS" : "FAIL"})`);
+}
+
+// ---------------------------------------------------------------------------
 
 const paths = process.argv.slice(2);
 if (paths.length === 0) {
   console.error("usage: node test/handoff-eval.ts <transcript.jsonl> [more...]");
   process.exit(1);
+}
+
+if (CHAIN) {
+  for (const p of paths) await runChain(p);
+  process.exit(0);
 }
 
 const rows: Row[] = [];
@@ -373,5 +457,18 @@ if (rows.length > 1) {
       `${(avg("raw") * 100).toFixed(0)}%`.padEnd(6) +
       `${(avg("spliced") * 100).toFixed(0)}%`.padEnd(8) +
       `${(avg("full") * 100).toFixed(0)}%`,
+  );
+  // per-probe pass rates in full mode - which probe is the weak link
+  const probeStats = new Map<string, { asked: number; passed: number }>();
+  for (const r of rows)
+    for (const id of r.probeIds) {
+      const s = probeStats.get(id) ?? { asked: 0, passed: 0 };
+      s.asked += 1;
+      if (!r.scores.full?.failed.includes(id)) s.passed += 1;
+      probeStats.set(id, s);
+    }
+  console.log(
+    "full-mode per-probe: " +
+      [...probeStats.entries()].map(([id, s]) => `${id} ${s.passed}/${s.asked}`).join("  "),
   );
 }
