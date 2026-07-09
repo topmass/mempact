@@ -253,6 +253,25 @@ export function handoffFactsBlock(failed: readonly Probe[]): string {
   return `<handoff_facts>\n${lines}\n</handoff_facts>`;
 }
 
+/**
+ * Deterministic run-state splice, appended to EVERY summary alongside the
+ * file lists. Sweep data (14 real sessions): mechanically spliced facts
+ * scored ~100% while summarizer-carried run state scored 4/11 - so the run
+ * facts get the same treatment as files.
+ */
+export function runFactsBlock(facts: { lastRun?: RunFact; lastError?: string }): string {
+  const lines: string[] = [];
+  if (facts.lastRun) {
+    const { command, exit, isError } = facts.lastRun;
+    const failed = isError || (exit != null && exit !== 0);
+    lines.push(
+      `<last-run>${command} -> ${failed ? `FAILED${exit != null ? ` (exit ${exit})` : ""}` : "succeeded"}</last-run>`,
+    );
+  }
+  if (facts.lastError) lines.push(`<unresolved-error>${facts.lastError}</unresolved-error>`);
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Fact extraction from host-neutral messages (pi shapes fit structurally)
 // ---------------------------------------------------------------------------

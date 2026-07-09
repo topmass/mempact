@@ -27,6 +27,7 @@ import {
   formatQuiz,
   gradeQuiz,
   mustPreserveSection,
+  runFactsBlock,
   type Probe,
 } from "../core/checkride.ts";
 import { getSection, renderForContext } from "../core/memory.ts";
@@ -299,8 +300,8 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
   if (verbose) console.log(`facts: ${probes.map((p) => `\n  - ${p.preserveLine.slice(0, 140)}`).join("")}`);
 
   const summary = await chat([...toChat(slice), { role: "user", content: SUMMARIZATION_PROMPT }], MAX_SUMMARY_TOKENS);
-  const fileOpsBlock = renderFileOps(fileOps);
-  const splicedSummary = fileOpsBlock ? `${summary}\n\n${fileOpsBlock}` : summary;
+  const spliceBlock = [renderFileOps(fileOps), runFactsBlock(run)].filter(Boolean).join("\n");
+  const splicedSummary = spliceBlock ? `${summary}\n\n${spliceBlock}` : summary;
 
   const userItems: HistoryItem[] = slice
     .filter(isRealUserMessage)
@@ -344,7 +345,7 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
     console.log("  full failed - MUST-PRESERVE retry:");
     const retryPrompt = `${SUMMARIZATION_PROMPT}\n\n${mustPreserveSection(fullResult.failed)}`;
     const retrySummary = await chat([...toChat(slice), { role: "user", content: retryPrompt }], MAX_SUMMARY_TOKENS);
-    const retrySpliced = fileOpsBlock ? `${retrySummary}\n\n${fileOpsBlock}` : retrySummary;
+    const retrySpliced = spliceBlock ? `${retrySummary}\n\n${spliceBlock}` : retrySummary;
     const second = await quizContext([...retained, summaryBridgeText(retrySpliced)], probes);
     row.retryScore = second.score;
     console.log(`  retry    ${(second.score * 100).toFixed(0).padStart(3)}%  failed: ${second.failed.map((p) => p.id).join(", ") || "none"}`);

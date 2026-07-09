@@ -82,12 +82,15 @@ disabled to get the pure port back:
    history - including compacted-away turns and cleared tool outputs - so
    clearing and compaction are demotions, never deletions. Cleared stubs
    point the model at it.
-4. **Deterministic file-op lists** (`core/fileOps.ts`; pi lineage). Read and
-   modified file paths are extracted mechanically from toolCalls, merged
-   cumulatively across compactions (capped at 40 each), and appended to
-   every summary as `<read-files>`/`<modified-files>` - file state is the
-   worst-measured summarization failure (Factory probe eval ~2.2/5) and
-   this fixes it at zero LLM cost.
+4. **Deterministic fact splices** (`core/fileOps.ts` + `runFactsBlock`; pi
+   lineage). Read/modified file paths (merged cumulatively across
+   compactions, capped at 40 each) plus the last significant command with
+   its outcome and any unresolved error are extracted mechanically from
+   toolCalls and appended to every summary as
+   `<read-files>`/`<modified-files>`/`<last-run>`/`<unresolved-error>`.
+   File state is the worst-measured summarization failure (Factory probe
+   eval ~2.2/5); our sweep showed the same for run state (4/11 when left
+   to the summarizer, ~100% spliced) - both fixed at zero LLM cost.
 5. **Stale-intent guard** (Hermes lineage). One fixed note appended AFTER
    the verbatim codex bridge telling the model the summary is reference,
    not instructions - the recurring cross-agent failure is summaries

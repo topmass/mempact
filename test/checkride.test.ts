@@ -7,6 +7,7 @@ import {
   handoffFactsBlock,
   mustPreserveSection,
   rareTokens,
+  runFactsBlock,
 } from "../core/checkride.ts";
 
 describe("checkride probes", () => {
@@ -62,6 +63,15 @@ describe("checkride probes", () => {
     expect(quiz).toContain("ONLY that record");
     expect(quiz).toContain("1. Which files");
     expect(quiz).toContain("UNKNOWN");
+  });
+
+  it("run-facts splice renders last run and unresolved error", () => {
+    const block = runFactsBlock({
+      lastRun: { command: "pnpm test", exit: 1, isError: false, firstLine: "3 failed" },
+      lastError: "3 failed",
+    });
+    expect(block).toBe("<last-run>pnpm test -> FAILED (exit 1)</last-run>\n<unresolved-error>3 failed</unresolved-error>");
+    expect(runFactsBlock({})).toBe("");
   });
 
   it("escalation templates carry the verbatim facts", () => {

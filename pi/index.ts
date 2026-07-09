@@ -63,6 +63,7 @@ import {
   gradeQuiz,
   handoffFactsBlock,
   mustPreserveSection,
+  runFactsBlock,
 } from "../core/checkride.ts";
 import { clearOldToolOutputs } from "../core/toolClearing.ts";
 import { type FileOpLists, collectFileOps, renderFileOps } from "../core/fileOps.ts";
@@ -398,8 +399,9 @@ export default function (pi: ExtensionAPI) {
       modifiedFiles: (lastCompaction && getMempactDetails(lastCompaction)?.modifiedFiles) || [],
     };
     const fileOps = collectFileOps(effective, prevOps);
-    const fileOpsBlock = renderFileOps(fileOps);
-    if (fileOpsBlock) summary = `${summary}\n\n${fileOpsBlock}`;
+    const runFacts = extractRunFacts(effective as never);
+    const spliceBlock = [renderFileOps(fileOps), runFactsBlock(runFacts)].filter(Boolean).join("\n");
+    if (spliceBlock) summary = `${summary}\n\n${spliceBlock}`;
 
     // codex replacement history: <=20k tokens of real user messages
     // (newest-first selection, oldest middle-truncated) + summary last.
@@ -422,11 +424,10 @@ export default function (pi: ExtensionAPI) {
     if (CHECKRIDE_ENABLED) {
       try {
         const memoryMd = readMemoryFile(ctx.cwd);
-        const run = extractRunFacts(effective as never);
         const probes = buildProbes({
           modifiedFiles: fileOps.modifiedFiles,
-          lastRun: run.lastRun,
-          lastError: run.lastError,
+          lastRun: runFacts.lastRun,
+          lastError: runFacts.lastError,
           lastUserMessage: realUserTexts[realUserTexts.length - 1],
           memoryNext: memoryMd ? getSection(memoryMd, "Next") : undefined,
           memoryDoneItems: memoryMd
@@ -476,7 +477,7 @@ export default function (pi: ExtensionAPI) {
                 .map((c) => c.text)
                 .join("\n");
               if (retriedSummary.trim()) {
-                const candidate = fileOpsBlock ? `${retriedSummary}\n\n${fileOpsBlock}` : retriedSummary;
+                const candidate = spliceBlock ? `${retriedSummary}\n\n${spliceBlock}` : retriedSummary;
                 const second = await quiz(candidate);
                 if (second.failed.length < result.failed.length) {
                   summary = candidate;
