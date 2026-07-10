@@ -400,7 +400,12 @@ export default function (pi: ExtensionAPI) {
     };
     const fileOps = collectFileOps(effective, prevOps);
     const runFacts = extractRunFacts(effective as never);
-    const spliceBlock = [renderFileOps(fileOps), runFactsBlock(runFacts)].filter(Boolean).join("\n");
+    const spliceBlock = [
+      renderFileOps(fileOps),
+      runFactsBlock({ ...runFacts, lastUserMessage: realUserTexts[realUserTexts.length - 1] }),
+    ]
+      .filter(Boolean)
+      .join("\n");
     if (spliceBlock) summary = `${summary}\n\n${spliceBlock}`;
 
     // codex replacement history: <=20k tokens of real user messages

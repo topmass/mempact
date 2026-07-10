@@ -30,9 +30,9 @@ that hot-swaps pi's default compaction in one settings line.
 
 1. **Fold** - the proven base: OpenAI Codex's compaction algorithm
    ("Memento"), ported verbatim with byte-exact parity tests.
-2. **Carry** - file lists, last command + exit code, and unresolved
-   errors are extracted from tool calls and appended to every summary
-   mechanically; a `.mempact/memory.md` the model maintains is injected
+2. **Carry** - file lists, last command + exit code, unresolved
+   errors, and the user's latest request (labeled, quoted verbatim) are
+   extracted from the records and appended to every summary mechanically; a `.mempact/memory.md` the model maintains is injected
    fresh every request, so it survives compaction by construction. Old
    tool outputs are cleared to one-line stubs and a `recall` tool can
    grep anything back - demotion, never deletion.

@@ -300,7 +300,12 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
   if (verbose) console.log(`facts: ${probes.map((p) => `\n  - ${p.preserveLine.slice(0, 140)}`).join("")}`);
 
   const summary = await chat([...toChat(slice), { role: "user", content: SUMMARIZATION_PROMPT }], MAX_SUMMARY_TOKENS);
-  const spliceBlock = [renderFileOps(fileOps), runFactsBlock(run)].filter(Boolean).join("\n");
+  const spliceBlock = [
+    renderFileOps(fileOps),
+    runFactsBlock({ ...run, lastUserMessage: lastUser ? textOf(lastUser) : undefined }),
+  ]
+    .filter(Boolean)
+    .join("\n");
   const splicedSummary = spliceBlock ? `${summary}\n\n${spliceBlock}` : summary;
 
   const userItems: HistoryItem[] = slice

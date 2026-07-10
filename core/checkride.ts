@@ -82,6 +82,14 @@ const clipLine = (s: string, max = 200): string => {
   return first.length <= max ? first : `${first.slice(0, max - 1)}…`;
 };
 
+/** Whitespace-flattened clip - the guaranteed-spliced window of a user
+ *  message; intent grading samples tokens from this SAME window so the
+ *  probe only demands what the splice actually carries. */
+const flatClip = (s: string, max = 300): string => {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+};
+
 const tokenGroups = (text: string, fraction: number): { groups: string[][]; minGroups: number } => {
   const groups = rareTokens(text).map((t) => [t]);
   return { groups, minGroups: Math.max(1, Math.ceil(fraction * groups.length)) };
@@ -145,7 +153,10 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
   }
 
   if (facts.lastUserMessage && facts.lastUserMessage.trim()) {
-    const { groups, minGroups } = tokenGroups(facts.lastUserMessage, 0.6);
+    // grade against the SAME clipped window the splice carries, so the
+    // probe never demands tokens outside the mechanical guarantee
+    const quote = flatClip(facts.lastUserMessage);
+    const { groups, minGroups } = tokenGroups(quote, 0.6);
     if (groups.length > 0)
       probes.push({
         id: "intent",
@@ -155,7 +166,7 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
           "Find the LAST message written by the user in the record above and quote it word-for-word, or as close as possible.",
         groups,
         minGroups,
-        preserveLine: `Latest user request (verbatim): "${clipLine(facts.lastUserMessage, 300)}"`,
+        preserveLine: `Latest user request (verbatim): "${quote}"`,
       });
   }
 
@@ -259,7 +270,11 @@ export function handoffFactsBlock(failed: readonly Probe[]): string {
  * scored ~100% while summarizer-carried run state scored 4/11 - so the run
  * facts get the same treatment as files.
  */
-export function runFactsBlock(facts: { lastRun?: RunFact; lastError?: string }): string {
+export function runFactsBlock(facts: {
+  lastRun?: RunFact;
+  lastError?: string;
+  lastUserMessage?: string;
+}): string {
   const lines: string[] = [];
   if (facts.lastRun) {
     const { command, exit, isError } = facts.lastRun;
@@ -269,6 +284,11 @@ export function runFactsBlock(facts: { lastRun?: RunFact; lastError?: string }):
     );
   }
   if (facts.lastError) lines.push(`<unresolved-error>${facts.lastError}</unresolved-error>`);
+  // the retained history carries this verbatim, but UNLABELED - sweeps
+  // showed resuming models fumble which message is the live request
+  // (intent probe 6/13) exactly as verify failed before ITS splice
+  if (facts.lastUserMessage && facts.lastUserMessage.trim())
+    lines.push(`<latest-user-request>${flatClip(facts.lastUserMessage)}</latest-user-request>`);
   return lines.join("\n");
 }
 

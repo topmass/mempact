@@ -65,13 +65,23 @@ describe("checkride probes", () => {
     expect(quiz).toContain("UNKNOWN");
   });
 
-  it("run-facts splice renders last run and unresolved error", () => {
+  it("run-facts splice renders last run, unresolved error, and labeled user request", () => {
     const block = runFactsBlock({
       lastRun: { command: "pnpm test", exit: 1, isError: false, firstLine: "3 failed" },
       lastError: "3 failed",
+      lastUserMessage: "fix the failing\n  auth test please",
     });
-    expect(block).toBe("<last-run>pnpm test -> FAILED (exit 1)</last-run>\n<unresolved-error>3 failed</unresolved-error>");
+    expect(block).toBe(
+      "<last-run>pnpm test -> FAILED (exit 1)</last-run>\n<unresolved-error>3 failed</unresolved-error>\n<latest-user-request>fix the failing auth test please</latest-user-request>",
+    );
     expect(runFactsBlock({})).toBe("");
+  });
+
+  it("intent grading only demands tokens inside the spliced 300-char window", () => {
+    const long = "please fix the login bug " + "filler words here ".repeat(40) + "UNIQUETAILTOKEN";
+    const [probe] = buildProbes({ lastUserMessage: long });
+    expect(probe!.preserveLine).not.toContain("UNIQUETAILTOKEN");
+    expect(probe!.groups.flat().join(" ")).not.toContain("UNIQUETAILTOKEN");
   });
 
   it("escalation templates carry the verbatim facts", () => {
