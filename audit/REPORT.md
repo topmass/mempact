@@ -589,6 +589,43 @@ Scale-only findings this exposed (fixed in `23c8618`):
   dominate); bounded but non-trivial — 3 quiz calls ≈ one extra summarization's
   worth of prefill per compaction. Documented, acceptable.
 
+## Comparative pass: pi-native compaction & Hermes memory (user request)
+
+### What pi does better natively — adopted
+1. **Summarization-input tool-result clipping** (pi `compaction/utils.ts`
+   TOOL_RESULT_MAX_CHARS=2000): the summarizer doesn't need full tool dumps.
+   Adopted (summarization input only; session record, previews, spill untouched).
+   Halves the summarization request at scale (126k → ~70k on the run-6 shape).
+2. **Usage on compaction entries**: pi persists the summarizer's token usage;
+   extension compactions without it are invisible in session accounting. Adopted —
+   mempact now passes `usage` through.
+
+### What pi does better natively — documented as experiment, not shipped
+3. **Verbatim retained tail**: pi keeps the newest ~20k tokens of REAL messages
+   (assistant + tool results included) through compaction; mempact (codex-style)
+   keeps only user messages + summary, so the model's own recent work survives
+   only as prose. For local models not trained on codex's summary-last layout,
+   pi's tail is plausibly better continuity. Mempact could get it almost free by
+   passing pi's `preparation.firstKeptEntryId` through instead of the
+   "keep-nothing" sentinel — but that breaks the trained summary-LAST layout and
+   double-includes tail user messages in the retained set. Flagged experiment
+   (`RETAIN_VERBATIM_TAIL`-style), needs its own checkride A/B before shipping.
+4. pi's iterative-summary merge (previousSummary passed to the prompt) and
+   split-turn cut discipline are cleaner than summary-of-summary chaining, but
+   mempact's mechanical staples make the difference low-stakes; not adopted.
+
+### What mempact does better than pi native (unchanged conclusions)
+Durable memory file (pi has none), model-facing recall (pi has none), spill-first
+full-output retention (pi's is bash-only + ephemeral tmpdir), verified handoffs
+(checkride), mechanical fact staples incl. git-state, overflow classifier breadth.
+
+### Hermes (NousResearch/hermes-agent) — see subsection below once source read
+completes; headline from their tracker: issue #17251 is the MIRROR of mempact's
+stale-intent lesson — their compaction demoted MEMORY to "background reference,
+NOT active instructions" and models obeyed literally, losing memory. Mempact's
+framing splits correctly (summary = reference; memory = authoritative own-state);
+keep that split.
+
 ## Definition-of-done tracking
 
 1. Middle-marker exact retrieval after compaction + restart — **✅ live-verified**

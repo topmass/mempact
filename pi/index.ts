@@ -396,7 +396,31 @@ export default function (pi: ExtensionAPI) {
     // codex compact.rs:84,212: append the summarization prompt as a user
     // message on top of real history; custom instructions override it.
     const promptText = event.customInstructions?.trim() || SUMMARIZATION_PROMPT;
-    const history: Message[] = convertToLlm(effective);
+    // pi-native adoption (compaction/utils.ts TOOL_RESULT_MAX_CHARS): the
+    // SUMMARIZER doesn't need full tool dumps - pi clips tool results to
+    // 2000 chars in its summarization input, roughly halving the request at
+    // scale (our 92k window produced a 126k request on full previews). The
+    // session record and the model-visible previews are untouched; spill
+    // keeps the full bytes either way.
+    const SUMMARIZE_TOOL_RESULT_MAX_CHARS = 2000;
+    const summarizeInput: AgentMessage[] = effective.map((m) => {
+      if ((m as { role?: string }).role !== "toolResult") return m;
+      const tr = m as { content?: { type: string; text?: string }[] };
+      if (!Array.isArray(tr.content)) return m;
+      let clipped = false;
+      const content = tr.content.map((b) => {
+        if (b.type !== "text" || typeof b.text !== "string") return b;
+        if (b.text.length <= SUMMARIZE_TOOL_RESULT_MAX_CHARS) return b;
+        clipped = true;
+        const omitted = b.text.length - SUMMARIZE_TOOL_RESULT_MAX_CHARS;
+        return {
+          ...b,
+          text: `${b.text.slice(0, SUMMARIZE_TOOL_RESULT_MAX_CHARS)}\n[... ${omitted} more characters truncated for summarization]`,
+        };
+      });
+      return clipped ? ({ ...m, content } as AgentMessage) : m;
+    });
+    const history: Message[] = convertToLlm(summarizeInput);
     const systemPrompt = ctx.getSystemPrompt();
 
     // Audit (92k live run): the trigger measures the CLEARED request envelope,
@@ -440,6 +464,10 @@ export default function (pi: ExtensionAPI) {
     const maxRetries = 3;
     let retries = 0;
     let summary = "";
+    // pi-native adoption: record the summarizer's usage on the compaction
+    // entry so the cost lands in session totals (pi does this natively;
+    // extension compactions without it are invisible in accounting).
+    let summaryUsage: AssistantMessage["usage"] | undefined;
     try {
       for (;;) {
         const messages: Message[] = [...history, userMsg(promptText, Date.now())];
@@ -461,6 +489,7 @@ export default function (pi: ExtensionAPI) {
           if (response.stopReason === "error") {
             throw new Error(response.errorMessage ?? "summarization request failed");
           }
+          summaryUsage = response.usage;
           break;
         } catch (error) {
           if (signal.aborted) return undefined;
@@ -637,6 +666,7 @@ export default function (pi: ExtensionAPI) {
         summary,
         firstKeptEntryId: FIRST_KEPT_SENTINEL,
         tokensBefore: preparation.tokensBefore,
+        usage: summaryUsage,
         details: {
           mempact: {
             version: 1,
