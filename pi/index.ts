@@ -136,8 +136,14 @@ const REMINDER_THRESHOLD_TOKENS = 10_000;
  * Flagged deviation #1 (see README): codex resumes the interrupted turn
  * after mid-turn compaction; pi aborts the loop. When true, nudge the model
  * to continue after an auto-compaction.
+ *
+ * Audit 2026-08-22: enabled. Live runs showed every mid-turn auto-compaction
+ * orphaning the in-flight answer (the handoff summary itself recorded
+ * "I have NOT yet sent the final reply") with nothing resuming it - the codex
+ * behavior is the correct one. The mempact summary carries the exact next
+ * action, so the continue nudge lands on a well-prepared context.
  */
-const CONTINUE_AFTER_AUTO_COMPACT = false;
+const CONTINUE_AFTER_AUTO_COMPACT = true;
 /**
  * Mechanical tool-output clearing (Anthropic context-editing lineage): once
  * context crosses this fraction of the auto-compact limit (~63% of the
@@ -463,9 +469,28 @@ export default function (pi: ExtensionAPI) {
     };
     const fileOps = collectFileOps(effective, prevOps);
     const runFacts = extractRunFacts(effective as never);
+    // Deterministic git-state staple (audit: mechanical-handoff item): branch,
+    // HEAD, and dirty count come from the working tree itself, zero LLM cost,
+    // and anchor the resumed model's world-state. Best-effort: non-git dirs
+    // and exec failures simply omit the line.
+    let gitState = "";
+    try {
+      const [branch, head, status] = await Promise.all([
+        pi.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: ctx.cwd, timeout: 3000 }),
+        pi.exec("git", ["rev-parse", "--short", "HEAD"], { cwd: ctx.cwd, timeout: 3000 }),
+        pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, timeout: 3000 }),
+      ]);
+      if (branch.code === 0 && head.code === 0) {
+        const dirty = status.code === 0 ? status.stdout.split("\n").filter((l) => l.trim()).length : -1;
+        gitState = `<git-state>branch ${branch.stdout.trim()} @ ${head.stdout.trim()}${dirty >= 0 ? `, ${dirty} uncommitted change${dirty === 1 ? "" : "s"}` : ""}</git-state>`;
+      }
+    } catch {
+      // not a git repo / no git binary: omit
+    }
     const spliceBlock = [
       renderFileOps(fileOps),
       runFactsBlock({ ...runFacts, lastUserMessage: realUserTexts[realUserTexts.length - 1] }),
+      gitState,
     ]
       .filter(Boolean)
       .join("\n");
@@ -704,12 +729,21 @@ export default function (pi: ExtensionAPI) {
     const triggerCompaction = () => {
       if (compacting) return;
       compacting = true;
+      // Continue-nudge only when the compaction actually interrupts a live
+      // run (ctx.compact() aborts it); an idle-time compaction must not make
+      // the model act unprompted.
+      let interruptedRun = false;
+      try {
+        interruptedRun = !ctx.isIdle();
+      } catch {
+        // stale runtime; treat as idle
+      }
       // The callbacks run async; the extension ctx may be stale by then
       // (session replaced, /reload, or -p mode exiting), so guard all use.
       ctx.compact({
         onComplete: () => {
           compacting = false;
-          if (CONTINUE_AFTER_AUTO_COMPACT) {
+          if (CONTINUE_AFTER_AUTO_COMPACT && interruptedRun) {
             try {
               pi.sendMessage(
                 {

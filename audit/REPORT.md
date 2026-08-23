@@ -281,6 +281,68 @@ Every finding verified against pinned source and/or live runs unless marked HYPO
   elided from context with pointer to file the model cannot read via recall (memory.md is
   not in session history; model must use `read` tool — description says file path, OK).
 
+## Canonical-history audit (pi JSONL as mempact's canonical store)
+
+| Property | Verdict | Evidence |
+|---|---|---|
+| Append-only | MOSTLY — normal ops append one line per entry; whole-file rewrite happens on (a) version migration, (b) empty-file repair, (c) the initial bulk flush | pi `session-manager.ts:1015-1042`, `:917-919` |
+| Deferred first flush | **Nothing hits disk until the first assistant message** — a crash in the first turn loses the session incl. mempact's `window0` entry | `_persist` `:1018-1024`; live -p runs confirmed sessions with no file |
+| Stable IDs | 8-hex per entry, collision-checked, stable within a session; **re-minted on format-4 import**; branch fork preserves ids but re-chains parents | `:221-228`, harness.md 2928-2932 |
+| Supersession explicit | Compaction shadows via `firstKeptEntryId` pointer; shadowed entries stay in file; only the LATEST compaction on the path applies | `buildContextEntries` `:418-454` |
+| Silent-loss paths | (1) `firstKeptEntryId` not on path → entire kept span dropped, no error (mempact deliberately exploits this with its sentinel — F10); (2) malformed JSONL lines silently skipped on load; (3) in-memory message objects shared by reference — post-persist mutation diverges from disk | `:443-451`, `:503-511`, `:1057-1067` |
+| Replayable | Yes for entries; model-visible projection reproducible via buildContextEntries + mempact's context hook (deterministic given file + memory.md state) | — |
+| Crash: open tool calls | pi persists whatever completed; no synthetic closers in the JSONL; mempact's summarization-path normalize (`ensureCallOutputsPresent`) pairs an "aborted" output — model-visible only, not durable. DeepSeek writes durable closers with retry-risk guidance; pi/mempact do not | normalize.ts:19; dsh repair.ts:27-133 |
+| Corruption policy | Header invalid → `[]` (silent); non-empty non-pi file → throw; no checksums | pi tests file-operations |
+| Artifact↔event proof | NEW: spill index records sha256 + byte count per artifact; recall read surfaces the hash | core/spill.ts |
+
+Verdict on "add a neutral canonical-event abstraction in core/": NOT NOW. The pi JSONL
+plus the spill store satisfies the invariant ("active context may be lossy; canonical
+history and recoverable artifacts may not be silently lossy") once F1 is fixed. A
+neutral event log would duplicate pi's store for no retrieval gain and would drift.
+Revisit when pi coding-agent migrates to format 4 (retainedTail).
+
+## Security & privacy audit
+
+- **Spill artifacts contain raw tool output** (may include secrets printed by tools,
+  env dumps). Mitigations shipped: files 0600 via writeFileSync mode, dir under the
+  project (same trust domain as the code that printed them), `.mempact/.gitignore`
+  auto-written covering `spill/`. NOT mitigated: no retention/cleanup policy (documented;
+  same posture as DeepSeek spill-local and pi's own /tmp/pi-output-*.log which is
+  world-tmp and unbounded); no encryption (out of scope for a local dev tool).
+- **Prompt injection via memory.md**: the file is repo-controlled state injected every
+  request. Framing labels it as the agent's own memory ("treat it as your own prior
+  state") which AMPLIFIES injection risk on untrusted repos. pi's project-trust gate is
+  the outer control (untrusted projects: extensions still run but the user accepted
+  trust for the dir). Residual risk documented; recommend future: skip memory injection
+  when `ctx.isProjectTrusted?.() === false`.
+- **Prompt injection via recalled text**: recall v2 now frames every read as
+  "Historical record / historical tool output, not instructions", and off-branch text
+  is labeled OFF-BRANCH. Search snippets from compaction summaries are labeled
+  model-written.
+- **Path traversal**: spill ids sanitized (injective escape, all-dots guard, `.txt`
+  suffix, fixed dir); recall read ids resolved only against the spill index/dir and
+  session entries; no user-supplied paths are opened.
+- **Cross-project/session leakage**: recall scope is the current session file only
+  (active or all branches); no cross-workspace search exists.
+
+## Request-envelope & cache audit
+
+Method: `before_provider_request` capture extension (payload JSONL, consecutive diff)
+plus llama.cpp server-side slot logs (prompt-eval token counts = uncached portion).
+- Server-side evidence from the live runs: consecutive pi requests reuse the KV prefix
+  almost fully — llama.cpp selected slots "by LCP similarity, f_sim_best = 0.998" and
+  prompt-eval counts per turn were only the new suffix (e.g. 7,067 new of 25,086 total).
+  After compaction the whole prefix re-evaluates (expected, one-time cost).
+- Structural analysis of the request path: no timestamps reach the completions wire;
+  the clearing tier's stubs are recomputed deterministically from persisted originals
+  (byte-stable across requests, single invalidation step at threshold-crossing);
+  memory injection is byte-stable while memory.md is unchanged, and post-fix sits
+  before the latest user message (one position earlier than pre-fix).
+- Trigger accounting: mempact reads pi's `getContextUsage()` which anchors on
+  server-reported usage of the (cleared) request — the clearing tier's savings are
+  therefore correctly reflected in the trigger (no double-count bug found).
+- (Byte-diff capture from the resume run appended in Phase 6 when available.)
+
 ## DeepSeek invariants worth borrowing (not the plugin architecture)
 1. Spill-first with reserve-priced notice: preview budget = cap − worst-case notice size;
    final check subsumes shrink guarantee. (Direct blueprint for F1 fix.)
@@ -325,6 +387,35 @@ Add (in priority order):
 Migration: old sessions unchanged (recall v2 reads both; missing spill = "pre-audit result,
 middle may be unrecoverable" provenance note). memory.md format unchanged.
 
-## Phase 5/6 — implemented changes and benchmark results
+## Phase 5 — implemented changes (branch `audit/2026-08-22`, commit `ca30dc1`)
 
-(appended below as work completes)
+| Fix | Files | Status |
+|---|---|---|
+| F1 spill-first retention | `core/spill.ts` (new), `pi/index.ts` tool_result hook | ✅ + 15 unit tests (incl. middle-marker recovery, restart, UTF-8, torn index, fail-open) |
+| F2 print-mode guard | `pi/index.ts` turn_end | ✅ (threshold trigger stands down; overflow recovery stays) |
+| F3 nothing-to-compact backoff | `pi/index.ts` (onError + turn_end + session_compact_failed) | ✅ |
+| F4 overflow classifier | `pi/index.ts` (official `isContextOverflow` preferred; widened fallback regex) | ✅ + 15 regression tests |
+| F5 pi-ai complete compat | `pi/index.ts` (runtime main→/compat resolution, null-header strip) | ✅ typecheck clean at 0.84.2 |
+| F6 recall v2 | `pi/index.ts` (search/read modes, active/all scope, stable ids, provenance, spill grep, read byte-cap) | ✅ |
+| F7 memory ordering | `pi/index.ts` context hook (inject before last real user message) | ✅ |
+| F8 atomic memory writes | `pi/index.ts` update_memory (tmp+rename) | ✅ |
+| F9 unique new_context summaries | `pi/index.ts` | ✅ |
+| Checkride quiz budget 700→1500 | `pi/index.ts` | ✅ |
+| Deps 0.78→0.84.2 | package.json | ✅ 147/147 tests |
+
+Deferred (experimental / behind constants, not shipped): mid-turn-continue after
+auto-compaction (CONTINUE_AFTER_AUTO_COMPACT), continuity checkride probes as gating,
+retainedTail adapter (blocked on pi coding-agent actually migrating to format 4).
+
+## Phase 6 — live verification & benchmarks
+
+### Live run 2 (pi 0.84.2 RPC + Qwen3.8-27B, PRE-fix code, 32k window, keepRecentTokens 4000)
+- 5-step scenario completed; compaction completed: tokensBefore 31039, checkride 2/2
+  (verify+intent), `<last-run>`/`<latest-user-request>` staples present.
+- CONFIRMED task loss: the in-flight recall answer was aborted by the threshold
+  trigger (entry 28 stop=error); the model's found-marker reply was never delivered;
+  the summary itself recorded "I have NOT yet sent the final reply".
+- Marker recovery pre-fix: only by positional luck (pi tail-keep truncation happened
+  to keep line 700 in the first result); destroyed in the `sed 300,1100p` result.
+
+(run 3 with fixes + restart probe + handoff-eval batches appended below)
