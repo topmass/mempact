@@ -619,12 +619,56 @@ Durable memory file (pi has none), model-facing recall (pi has none), spill-firs
 full-output retention (pi's is bash-only + ephemeral tmpdir), verified handoffs
 (checkride), mechanical fact staples incl. git-state, overflow classifier breadth.
 
-### Hermes (NousResearch/hermes-agent) — see subsection below once source read
-completes; headline from their tracker: issue #17251 is the MIRROR of mempact's
-stale-intent lesson — their compaction demoted MEMORY to "background reference,
-NOT active instructions" and models obeyed literally, losing memory. Mempact's
-framing splits correctly (summary = reference; memory = authoritative own-state);
-keep that split.
+### Hermes (NousResearch/hermes-agent @ fd76043) — source-read complete
+
+**Correction to mempact's own citations (adopted):** the anti-thrash rule mempact
+implemented ("pause if the last two compactions each freed <10%") exists in hermes
+only as a STALE DOCSTRING (context_compressor.py:3383 et al.); their test file
+(tests/agent/test_compaction_anti_thrash.py) documents why it was dead code AND the
+wrong yardstick — when the incompressible floor (system prompt + tools) alone keeps
+the prompt over the trigger, every pass frees a healthy fraction yet compaction
+re-fires forever (exactly our F3 wedge class). Their shipped mechanism is
+goal-based: "did the post-compaction prompt get back under the threshold?" on real
+provider tokens, 2 durable strikes → pause, 300s probation probe. **Adopted** in
+pi/index.ts (goal-based strikes + 5-minute probe re-arm).
+
+**Adopted from hermes (hard-won lessons, all shipped):**
+- Goal-based anti-thrash (above).
+- Stale-intent note hardening: reverse-signal cancellation sentence (their
+  summarizer-side rule), memory-stays-authoritative carve-out (their #17251 fix —
+  compaction framing demoted MEMORY to background reference and models obeyed
+  literally), and tools-remain-active carve-out (their #66291 — REFERENCE-ONLY
+  framing made models narrate instead of act).
+- **Anchor index** (core/anchors.ts): mechanical regex harvest of commit SHAs,
+  PR/issue refs, file paths, URLs, and error lines into an <anchor-index> splice —
+  no LLM in the loop, capped and deduped newest-first. Hermes measured +33pts
+  closed-book needle-fact recall from this (SCORECARD-2026-08-15). Direct extension
+  of mempact's mechanical-carriage ethos. 7 new tests.
+
+**Hermes does better; noted, not adopted (bigger builds):**
+- Cross-session, cross-profile recall over SQLite FTS5 with adaptive result
+  hydration and "SOURCE-FIRST LIMIT" framing (session_search_tool.py) — mempact's
+  recall is session-local; broadening scope is a future feature, not a fix.
+- Chunked map-reduce summary digests for 400k+ regions (one flat summary collapses
+  to ~33% recall at that scale, per their comments).
+- Archive-don't-delete compaction in SQLite with watermark + commit-fence
+  concurrency guards (pi's JSONL + our sentinel achieves demotion-not-deletion
+  differently; the concurrency fences have no pi analog to attach to).
+- A reproducible offline eval harness with 500k-token lineage transcripts, quiz
+  banks, and a published scorecard incl. a head-to-head vs real Codex CLI — the
+  offline complement to mempact's runtime checkride; worth building eventually.
+- Memory content policy prompts worth quoting in future docs: "If a fact will be
+  stale in a week, it does not belong in memory"; write memories declarative, not
+  imperative ("imperative phrasing gets re-read as a directive in later sessions").
+
+**Mempact does better than hermes (validated by their tracker):**
+- Structured memory sections (hermes: flat §-list, 2,200-char cap, refuse-on-full).
+- Memory re-injected fresh every request (hermes: frozen snapshot at session start —
+  a correction saved at turn 5 doesn't reach the prompt until next session).
+- Built-in pre-compaction memory flush (hermes has it for external providers only).
+- Runtime post-compaction verification (their quiz exists only offline; the
+  best-scoring "lean" compaction mode ships OFF by default).
+- Verbatim-user retention budget: mempact 20k tokens vs their ~6k.
 
 ## Definition-of-done tracking
 

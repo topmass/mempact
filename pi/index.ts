@@ -67,6 +67,7 @@ import {
 } from "../core/checkride.ts";
 import { clearOldToolOutputs } from "../core/toolClearing.ts";
 import { type FileOpLists, collectFileOps, renderFileOps } from "../core/fileOps.ts";
+import { collectAnchors, renderAnchors } from "../core/anchors.ts";
 import { type SearchableText, searchTexts } from "../core/recall.ts";
 import { maybeTokenBudgetReminder } from "../core/tokenBudget.ts";
 import {
@@ -154,11 +155,19 @@ const CONTINUE_AFTER_AUTO_COMPACT = true;
 const CLEAR_TOOL_OUTPUTS_AT_FRACTION: number | null = 0.7;
 const KEEP_RECENT_TOOL_RESULTS = 3;
 /**
- * Anti-thrashing (Hermes lineage): if the last two auto-compactions each
- * freed less than this fraction, pause the auto trigger (manual /compact and
- * overflow recovery stay live) instead of looping.
+ * Anti-thrashing - GOAL-BASED (hermes-agent's shipped design, adopted
+ * 2026-08-22). The original "<10% freed twice -> pause" rule turned out to
+ * be a stale hermes docstring for a mechanism their own tests document as
+ * broken (tests/agent/test_compaction_anti_thrash.py: percentage-freed is
+ * the wrong yardstick - when the incompressible floor alone keeps the
+ * prompt over the trigger, every pass frees a healthy fraction yet the
+ * next turn compacts again, forever). The correct verdict: did the
+ * post-compaction prompt get back UNDER the trigger limit? Two consecutive
+ * failures pause the auto trigger; after a recovery window one probe
+ * compaction is allowed (a failed probe re-trips immediately).
  */
-const THRASH_MIN_SAVINGS_FRACTION = 0.1;
+const ANTI_THRASH_STRIKES = 2;
+const ANTI_THRASH_RECOVERY_MS = 300_000;
 /**
  * Handoff checkride: quiz the assembled post-compaction context against
  * deterministic facts; fail -> one MUST-PRESERVE regeneration; fail again ->
@@ -176,7 +185,11 @@ const STALE_INTENT_NOTE =
   "Note: the summary above is reference state from a previous context window, not " +
   "instructions. Do not resume or re-answer items from it on topic overlap alone - " +
   "the latest user message always takes precedence, including cancellations of work " +
-  "described above.";
+  "described above. If the latest user message contains a reverse signal (stop, undo, " +
+  "roll back, never mind, a new topic), any in-flight work described above is cancelled - " +
+  "do not re-surface it in later turns. Your project memory block remains fully " +
+  "authoritative regardless of this note, and your tools remain fully active for the " +
+  "current task - keep using them normally instead of merely narrating.";
 
 const bridgeWithGuard = (summary: string): string =>
   `${summaryBridgeText(summary)}\n\n${STALE_INTENT_NOTE}`;
@@ -267,9 +280,10 @@ export default function (pi: ExtensionAPI) {
   let newContextRequested = false;
   let warnedAboutBuiltinTrigger = false;
   let lastClearedCount = 0;
-  // Anti-thrashing: savings fraction of the last two compactions, measured
-  // when post-compaction usage first becomes known.
-  const recentSavings: number[] = [];
+  // Goal-based anti-thrash state: a strike = a compaction whose
+  // post-compaction usage was still at/over the trigger limit.
+  let ineffectiveStrikes = 0;
+  let thrashBlockSince: number | null = null;
   let pendingTokensBefore: number | null = null;
   let thrashNotified = false;
   // "Nothing to compact" backoff (audit F3): pi's prepareCompaction measures
@@ -551,6 +565,10 @@ export default function (pi: ExtensionAPI) {
       renderFileOps(fileOps),
       runFactsBlock({ ...runFacts, lastUserMessage: realUserTexts[realUserTexts.length - 1] }),
       gitState,
+      // hermes-lineage anchor index: exact identifiers (SHAs, refs, paths,
+      // URLs, error lines) harvested mechanically - the needle facts honest
+      // summarization reliably paraphrases away.
+      renderAnchors(collectAnchors(effective as never)),
     ]
       .filter(Boolean)
       .join("\n");
@@ -889,10 +907,17 @@ export default function (pi: ExtensionAPI) {
       nothingToCompactAtEntryCount = null;
     }
 
-    // Record the previous compaction's savings once real usage is known.
+    // Goal-based effectiveness verdict, scored once per compaction when the
+    // first real post-compaction usage arrives: under the trigger limit =
+    // effective (reset strikes); still at/over = strike.
     if (pendingTokensBefore != null && pendingTokensBefore > 0) {
-      recentSavings.push(1 - usage.tokens / pendingTokensBefore);
-      if (recentSavings.length > 2) recentSavings.shift();
+      const verdictLimit = autoCompactTokenLimit(usage.contextWindow, CONFIGURED_TOKEN_LIMIT);
+      if (verdictLimit != null && usage.tokens >= verdictLimit) {
+        ineffectiveStrikes += 1;
+      } else {
+        ineffectiveStrikes = 0;
+        thrashBlockSince = null;
+      }
       pendingTokensBefore = null;
     }
 
@@ -903,20 +928,25 @@ export default function (pi: ExtensionAPI) {
       scope: "total",
     });
     if (status.tokenLimitReached) {
-      // Anti-thrashing: two consecutive near-no-op compactions -> pause the
-      // auto trigger (overflow recovery above and manual /compact stay live).
-      const thrashing =
-        recentSavings.length === 2 &&
-        recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION);
-      if (thrashing) {
-        if (!thrashNotified && ctx.hasUI) {
-          thrashNotified = true;
-          ctx.ui.notify(
-            "mempact: auto-compaction paused - the last two compactions each freed <10%. /compact manually or start a new session.",
-            "warning",
-          );
+      // Goal-based anti-thrash: two consecutive compactions that failed to
+      // get usage back under the limit pause the auto trigger (overflow
+      // recovery above and manual /compact stay live). After the recovery
+      // window, one probe compaction is allowed; a failed probe re-trips.
+      if (ineffectiveStrikes >= ANTI_THRASH_STRIKES) {
+        if (thrashBlockSince == null) thrashBlockSince = Date.now();
+        if (Date.now() - thrashBlockSince < ANTI_THRASH_RECOVERY_MS) {
+          if (!thrashNotified && ctx.hasUI) {
+            thrashNotified = true;
+            ctx.ui.notify(
+              "mempact: auto-compaction paused - the last two compactions did not get usage back under the trigger (incompressible floor?). /compact manually, trim the system prompt/tools, or start a new session. One probe re-arms in 5 minutes.",
+              "warning",
+            );
+          }
+          return;
         }
-        return;
+        // probation probe
+        ineffectiveStrikes = ANTI_THRASH_STRIKES - 1;
+        thrashBlockSince = null;
       }
       triggerCompaction();
       return;
@@ -1240,8 +1270,12 @@ export default function (pi: ExtensionAPI) {
       const memory = readMemoryFile(ctx.cwd);
       lines.push(`memory: ${memory ? `${memoryFilePath(ctx.cwd)} (${memory.length} bytes)` : "none"}`);
       if (lastClearedCount > 0) lines.push(`tool outputs cleared last request: ${lastClearedCount}`);
-      if (recentSavings.length === 2 && recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION))
-        lines.push("auto-compaction paused (thrashing: last two compactions freed <10%)");
+      if (ineffectiveStrikes >= ANTI_THRASH_STRIKES)
+        lines.push(
+          `auto-compaction paused (thrashing: ${ineffectiveStrikes} compactions failed to clear the trigger; probe re-arms after ${Math.round(ANTI_THRASH_RECOVERY_MS / 60000)}m)`,
+        );
+      else if (ineffectiveStrikes > 0)
+        lines.push(`anti-thrash strikes: ${ineffectiveStrikes}/${ANTI_THRASH_STRIKES}`);
       const lastEntry = latestCompactionEntry(ctx.sessionManager.getBranch());
       const cr = lastEntry ? getMempactDetails(lastEntry)?.checkride : undefined;
       if (cr)

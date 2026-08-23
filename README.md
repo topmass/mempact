@@ -74,8 +74,11 @@ memory file exists the model is told to persist anything durable NOW via
 4. **The handoff checkride** runs (see below). Fail: one regeneration
    with explicit MUST-state-these-facts lines. Fail again: the facts are
    pasted in verbatim by code. Compaction is never blocked; the score is
-   persisted per compaction. If two consecutive compactions each freed
-   under 10%, the auto trigger pauses instead of looping.
+   persisted per compaction. If two consecutive compactions fail to get
+   usage back UNDER the trigger, the auto trigger pauses (goal-based
+   verdict - hermes-agent's shipped anti-thrash; the old "each freed under
+   10%" rule turned out to be a stale hermes docstring whose design their
+   own tests document as broken), with one probe re-armed after 5 minutes.
 
 The next window opens at roughly 2 to 8% full: recent user words
 verbatim, the verified note with its staples, memory freshly injected,
