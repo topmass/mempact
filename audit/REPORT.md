@@ -548,15 +548,46 @@ window to force compactions quickly; production (`server-pc`) declares 262144. T
 runs below exercise the same code paths at production-like absolute sizes:
 llama.cpp reloaded at 225280 ctx.
 
-(a) handoff-eval at TOKEN_BUDGET=160000 on the two largest real rollouts —
-    the README's "summaries get worse at 160k" claim, re-measured on Qwen3.8 v3:
-    RESULTS PENDING
+(a) handoff-eval at TOKEN_BUDGET=160000 on the two largest real rollouts: the 5MB
+    rollout's parseable content tops out at ~76k tokens (whole transcript fits), so
+    the largest single-shot real input was **76,340 tokens**: raw 0% / spliced 100% /
+    full 100%. Second transcript (27k): 100% across all tiers. A true-160k input
+    (concatenated rollouts) appended below.
 
-(b) Live pi session with declared contextWindow 102400: ~26 large pasted user
-    chunks (uncleared) + 26 × 50KB tool outputs (clearable+spilled), driving real
-    usage through the clearing tier (~64.5k) to the 90% trigger (~92k), then
-    window-1 recall probes (early user chunk id + early spilled marker):
-    RESULTS PENDING
+(b) Live pi session, declared contextWindow 102400 (RPC run 6, 26 chunks + probes):
+    **FOUR compactions completed at tokensBefore 92,591 / 97,395 / 95,940 / 98,039.**
+    - Checkrides: fact probes (files/verify/intent) passed every window; the
+      memory-derived probes (next/constraints — sourced from run-5's genuinely
+      stale memory.md, never updated during run 6) failed the quiz every time and
+      were mechanically SPLICED — the escalation ladder's first live workout at
+      scale, and it carried the facts every window.
+    - Retained-user budget kept 6 of 9 chunks per window (20k cap working; note the
+      4-bytes/token estimator undercounts this prose ~1.7x, so ~40k real tokens).
+    - **Window-1 recall after FOUR compactions:** the resumed model quoted
+      `CHUNK-01-MAGIC-QPD80XOI` — byte-identical to ground truth written before the
+      run — straight from a recall search hit on the canonical entry (e:dcee912c);
+      and the spilled marker line came back verbatim via search → exact spill read.
+    - Last-run fact correct at the end (`sed -n 280,980p` CHUNK26 — succeeded).
+
+(c) True-160k eval (four real rollouts concatenated; slice **158,939 tokens**,
+    summarization prefill 214s): raw summary **0%** — the quiz-taker answered
+    literally "UNKNOWN" to the latest-user-request probe; spliced **100%**,
+    full **100%** (verbatim quote). The README's degradation curve confirmed and
+    sharpened on this model: raw 25% avg at ~50k slices → 0% at 159k, while the
+    mechanical tiers stay at 100% regardless of scale.
+
+Scale-only findings this exposed (fixed in `23c8618`):
+- **F15**: per-result clearing-boundary advancement re-invalidated ~50k of KV cache
+  every turn (server logs: alternating ~52k prompt-evals). Fixed: boundary advances
+  in CLEAR_BATCH=4 steps.
+- **F16**: trigger measures the CLEARED envelope; summarization sends UNCLEARED
+  entries — the summarization request hit **126,041 tokens vs the 102,400 declared
+  window** (server headroom masked what would be a provider overflow + front-trim
+  churn). Fixed: deterministic pre-trim to 85% of the declared window before the
+  first summarization call; codex front-trim retry remains as backstop.
+- Checkride quiz requests at this scale are ~40k tokens each (retained users
+  dominate); bounded but non-trivial — 3 quiz calls ≈ one extra summarization's
+  worth of prefill per compaction. Documented, acceptable.
 
 ## Definition-of-done tracking
 
