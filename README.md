@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="tests: 147 passing" src="https://img.shields.io/badge/tests-147%20passing-201b15">
+  <img alt="tests: 156 passing" src="https://img.shields.io/badge/tests-156%20passing-201b15">
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
   <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
@@ -156,6 +156,15 @@ Then hand compaction timing fully to mempact in
 { "compaction": { "enabled": false } }
 ```
 
+Recommended for local models whose system prompt is large relative to the
+window: also set `"keepRecentTokens": 4000` in that block. pi builds its
+compaction *preparation* from session entries measured against
+`keepRecentTokens` (default 20k) and refuses with "Nothing to compact"
+before mempact's hook ever runs when the entries still fit - even while the
+real request envelope (system prompt included) is over the trigger. A small
+value keeps pi's preparation permissive; mempact rebuilds the full window
+itself and ignores the prepared cut anyway.
+
 That's the whole install. `/mempact` shows the window chain, memory
 state, and last handoff score. Knobs are module constants at the top of
 `pi/index.ts` (`CHECKRIDE_ENABLED`, `CLEAR_TOOL_OUTPUTS_AT_FRACTION`,
@@ -185,7 +194,7 @@ import {
 ## Development
 
 ```bash
-pnpm install && pnpm test   # 117 vitest cases, incl. byte-exact codex parity
+pnpm install && pnpm test   # 156 vitest cases, incl. byte-exact codex parity
 ```
 
 Base engine derived from [openai/codex](https://github.com/openai/codex)
