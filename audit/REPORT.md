@@ -83,6 +83,33 @@ marker near the head of the kept window — survival is positional luck, not pol
 9. UI transcript — pi TUI /tree (human-only).
 10. Checkride ground truth — extracted from in-window messages at compaction time.
 
+### Post-fix lifecycle (what ships on the audit branch)
+
+```
+tool execution (pi)
+  -> [L1] pi bash accumulator: >50KB/2000 lines -> tail-keep + FULL stream to
+     os.tmpdir()/pi-output-*.log (ephemeral)
+  -> tool_result hook (mempact):
+       if details.fullOutputPath exists (bash) -> read pi's FULL stream (<=8MB)
+       spill source -> .mempact/spill/<toolCallId>.txt  [atomic, sha256+bytes
+       indexed, git-ignored, fail-open]
+       preview = codex 10KB middle-ellipsis + one locator line
+  -> [CANONICAL] pi session JSONL: preview+locator persisted; spill dir holds
+     every accepted byte durably
+  -> context hook: clearing tier stubs old results (session file untouched);
+     memory injected BEFORE the latest real user message
+  -> compaction: full-window summarize + mechanical staples
+     (<read-files>/<modified-files>/<last-run>/<unresolved-error>/
+      <latest-user-request>/<git-state>) + checkride (quiz->retry->splice)
+  -> post-compaction: continue-nudge resumes an interrupted run
+  -> recall v2: search (active|all, stable ids, provenance labels, spill grep)
+                -> read (exact entry / spill slice, offset/limit, hash shown)
+Invariant now held: active context may be lossy; canonical history + spill
+artifacts are not silently lossy (sole exception: non-bash tools' output that
+pi itself truncates upstream — none exist in pi's builtin set today: read/grep/
+find/ls truncate but those are re-derivable from the filesystem).
+```
+
 ## Phase 3 — Findings
 
 Severity: P0 = destroys user data / task; P1 = correctness of the core loop; P2 = quality/robustness; P3 = polish.
@@ -491,6 +518,28 @@ could reinforce stale state — mitigated now by relabeling the `next` preserve 
 (local thinking models return empty answers at small budgets otherwise). Continuity
 probes are validated LIVE (perform-next-step, no-redo, exact-retrieval) rather than
 gating the compaction path.
+
+### Live run 5 — correction + cancellation + stale memory (scenarios 2/3/8)
+- User set up "plan A" (notes.txt + memory Next="continue implementing the JSON
+  parser"), then cancelled it mid-session and pivoted.
+- The model repaired memory AT the cancellation (Goal/Plan/Decisions/Next all
+  rewritten to "CANCELLED — do not resume"), so the stale-Next conflict self-healed
+  before compaction (the update_memory design working as intended).
+- Compaction: tokensBefore 32542, **checkride 6/6** (files/verify/intent/done/next/
+  constraints all active; one retry, no splice), `<modified-files>` carried notes.txt,
+  `<latest-user-request>` verbatim.
+- Post-compaction probes: current task correct; "Should you continue implementing the
+  JSON parser?" → "No — … explicitly cancelled … must not be resumed under any
+  circumstances." Scenario 3/8 PASS.
+- fullOutputPath capture verified: spill store now holds the COMPLETE 100,809-byte
+  cat output (beyond pi's 50KB tail-keep), plus full 57.6KB/64.8KB sed/tail outputs.
+- Residuals: continue-nudge also fired after an already-completed turn (harmless
+  repeated "PUSH DONE"; refine via agent_settled later); `<git-state>` correctly
+  omitted in a non-git dir.
+- CHAIN file-fact benchmark: not derivable from today's rollouts (no apply_patch
+  file edits in any of them — codex sessions were advisory); the multi-window
+  file-fact invariant is covered by the cumulative `<modified-files>` merge tests
+  and the live spill/recall path instead.
 
 ## Definition-of-done tracking
 

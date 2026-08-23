@@ -916,11 +916,16 @@ export default function (pi: ExtensionAPI) {
       }
     }
     let changed = false;
+    let spilledBlocks = 0;
     const content = event.content.map((c) => {
       if (c.type !== "text") return c;
       const hookBytes = encoder.encode(c.text).length;
       const needsCap = hookBytes > capBytes;
-      const haveBiggerSource = fullSource != null && encoder.encode(fullSource).length > hookBytes;
+      // the fullSource (pi's bash stream) corresponds to the first text block only
+      const haveBiggerSource =
+        spilledBlocks === 0 &&
+        fullSource != null &&
+        encoder.encode(fullSource).length > hookBytes;
       if (!needsCap && !haveBiggerSource) return c;
       changed = true;
       const source = haveBiggerSource ? fullSource! : c.text;
@@ -928,7 +933,10 @@ export default function (pi: ExtensionAPI) {
       const preview = needsCap
         ? truncateMiddleChars(c.text, byteBudget(DEFAULT_TRUNCATION_POLICY))
         : c.text;
-      const ref = spillFullOutput(ctx.cwd, event.toolCallId, event.toolName, source);
+      // suffix keeps multiple oversized blocks in one result from colliding
+      const spillId = spilledBlocks === 0 ? event.toolCallId : `${event.toolCallId}-b${spilledBlocks}`;
+      spilledBlocks += 1;
+      const ref = spillFullOutput(ctx.cwd, spillId, event.toolName, source);
       if (!ref) return needsCap ? { ...c, text: preview } : c; // fail-open
       const omitted = Math.max(0, sourceBytes - encoder.encode(preview).length);
       return { ...c, text: `${preview}\n${spillNotice(ref, omitted)}` };
