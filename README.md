@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="tests: 117 passing" src="https://img.shields.io/badge/tests-117%20passing-201b15">
+  <img alt="tests: 147 passing" src="https://img.shields.io/badge/tests-147%20passing-201b15">
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
   <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
@@ -28,12 +28,20 @@ that hot-swaps pi's default compaction in one settings line.
 
 <img src="assets/how.png" alt="Fold (codex algorithm), Carry (mechanical fact splices), Verify (the checkride), Continue" width="100%">
 
-**From the first message.** Every tool output is capped at 10KB the
-moment it is recorded (codex's rule, kept verbatim), so no single command
-dump can flood the window. If a `.mempact/memory.md` exists, it is
-re-injected fresh from disk into every request, so it structurally cannot
-be compacted away. Everything ever recorded stays on disk, and a `recall`
-tool can grep it back at any time. Demotion, never deletion.
+**From the first message.** Every tool output is capped at 10KB in the
+model's view (codex's rule, kept verbatim), so no single command dump can
+flood the window - but the cap is now **spill-first**: before truncation,
+the full original bytes are written to `.mempact/spill/` (atomic,
+sha256-indexed, git-ignored) and the preview carries an exact locator.
+Upstream codex only ever truncated its in-memory history while the rollout
+file kept the full item; the original port truncated before pi persisted,
+destroying the only canonical copy - fixed. If a `.mempact/memory.md`
+exists, it is re-injected fresh from disk into every request (immediately
+BEFORE the latest real user message, so the live instruction always
+outranks memory), so it structurally cannot be compacted away. Everything
+ever recorded stays recoverable, and the `recall` tool searches AND
+exact-reads it back at any time. Demotion, never deletion - now actually
+true for every byte the harness accepted.
 
 **At about 63% of the window.** Old tool outputs go on a diet: every
 tool result older than the newest 3 is stubbed down to its first line
@@ -153,7 +161,12 @@ state, and last handoff score. Knobs are module constants at the top of
 `pi/index.ts` (`CHECKRIDE_ENABLED`, `CLEAR_TOOL_OUTPUTS_AT_FRACTION`,
 ...) and peel back to the pure codex port. Degrades to silence, never
 breakage: no model, no auth, or any checkride error means plain codex
-compaction ships. Tested against pi 0.78-0.80.x.
+compaction ships. Tested against pi 0.78-0.84.x (the pi-ai `complete`
+move to `/compat` and the official `isContextOverflow` classifier are
+feature-detected at runtime). In `-p`/print mode the threshold trigger
+stands down - `ctx.compact()` aborts the in-flight run and a print
+process exits before the async compaction persists, so auto-compacting
+there loses both the task and the checkpoint.
 
 ## Standalone core
 
