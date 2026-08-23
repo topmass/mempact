@@ -399,6 +399,37 @@ export default function (pi: ExtensionAPI) {
     const history: Message[] = convertToLlm(effective);
     const systemPrompt = ctx.getSystemPrompt();
 
+    // Audit (92k live run): the trigger measures the CLEARED request envelope,
+    // but summarization rebuilds UNCLEARED entry content - the summarization
+    // request measured 126k tokens against a 102.4k declared window (only
+    // server headroom saved it; a real provider would overflow and pay one
+    // failed request per front-trim round). Pre-trim deterministically to
+    // ~85% of the declared window before the first call; the in-loop
+    // overflow retry remains as the backstop. Same 4-bytes/token estimator
+    // family as the trigger (undercounts prose; hence the 85% margin).
+    const declaredWindow = (ctx.model as { contextWindow?: number }).contextWindow;
+    if (declaredWindow && declaredWindow > 0) {
+      const estTokens = (msgs: Message[]): number =>
+        Math.ceil(JSON.stringify(msgs).length / 4);
+      const budget = Math.floor(declaredWindow * 0.85);
+      let preTrimmed = 0;
+      while (history.length > 1 && estTokens(history) > budget) {
+        history.shift();
+        while (history.length > 1 && history[0]!.role === "toolResult") history.shift();
+        preTrimmed += 1;
+      }
+      if (preTrimmed > 0 && ctx.hasUI) {
+        try {
+          ctx.ui.notify(
+            `mempact: summarization input pre-trimmed by ${preTrimmed} oldest message(s) to fit the ${declaredWindow}-token window`,
+            "info",
+          );
+        } catch {
+          // headless
+        }
+      }
+    }
+
     // codex compact.rs:233-296 front-trim retry loop, on pi's flat message
     // model: dropping a leading message also drops the toolResults that
     // would be orphaned (pairing rule from context_manager/normalize.rs).

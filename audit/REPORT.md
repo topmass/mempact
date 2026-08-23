@@ -541,6 +541,23 @@ gating the compaction path.
   file-fact invariant is covered by the cumulative `<modified-files>` merge tests
   and the live spill/recall path instead.
 
+### Large-window verification (user request: 100k+)
+
+Context for scale-reading these tests: the earlier live runs used a 32k declared
+window to force compactions quickly; production (`server-pc`) declares 262144. The
+runs below exercise the same code paths at production-like absolute sizes:
+llama.cpp reloaded at 225280 ctx.
+
+(a) handoff-eval at TOKEN_BUDGET=160000 on the two largest real rollouts —
+    the README's "summaries get worse at 160k" claim, re-measured on Qwen3.8 v3:
+    RESULTS PENDING
+
+(b) Live pi session with declared contextWindow 102400: ~26 large pasted user
+    chunks (uncleared) + 26 × 50KB tool outputs (clearable+spilled), driving real
+    usage through the clearing tier (~64.5k) to the 90% trigger (~92k), then
+    window-1 recall probes (early user chunk id + early spilled marker):
+    RESULTS PENDING
+
 ## Definition-of-done tracking
 
 1. Middle-marker exact retrieval after compaction + restart — **✅ live-verified**
