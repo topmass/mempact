@@ -418,4 +418,113 @@ retainedTail adapter (blocked on pi coding-agent actually migrating to format 4)
 - Marker recovery pre-fix: only by positional luck (pi tail-keep truncation happened
   to keep line 700 in the first result); destroyed in the `sed 300,1100p` result.
 
-(run 3 with fixes + restart probe + handoff-eval batches appended below)
+### Live run 3 (fixed code: spill-first + recall v2)
+- All 4 oversized outputs spilled (`.mempact/spill/`, sha256-indexed); the compaction
+  summary itself cites the spill locators mechanically.
+- recall v2 search returned stable ids (`e:<entryId>`, `spill:<id>`) with provenance
+  labels; 7 matches for the marker including 2 spill artifacts with line positions —
+  including regions the in-context copies had destroyed.
+- Compaction completed: tokensBefore 31924, checkride 2/2.
+- Remaining gap observed: the in-flight recall answer was still orphaned by the
+  mid-turn compaction ("NOT YET ANSWERED" in the summary) → motivated enabling
+  CONTINUE_AFTER_AUTO_COMPACT.
+
+### Live run 4 (continue-after-compact enabled)
+- Mid-turn compaction (tokensBefore 31933, checkride 2/2) aborted the recall answer;
+  the `mempact:continue` nudge fired; the RESUMED model (handoff context only)
+  re-searched, exact-read `spill:cEKn…` at offset 605, and delivered the exact marker
+  line `line 00700 UNIQUE-MARKER-ZEBRA-9137-XRAY buried deep in the middle of this
+  output` with locator + sha256 provenance — then answered the last-run factual probe
+  correctly from the `<last-run>` staple.
+- Continuity checks passed live: perform-exact-next-step ✅, correct source file ✅,
+  no redo of completed steps ✅.
+- Environmental noise: each post-compaction request first failed with a transient
+  "Connection error." and succeeded on pi's automatic retry (single-slot llama.cpp +
+  long re-prefill; not a mempact defect).
+
+### Restart + resume probe (fresh pi process, --continue)
+- After process restart, recall search → exact spill read again produced the verbatim
+  marker line (definition-of-done #1 incl. restart ✅).
+- Don't-redo probe: resumed model answered "yes, output was 1399" from context without
+  re-running the command ✅.
+
+### Request-envelope capture (resume session, 6 requests)
+- Message-prefix stability between consecutive requests: 17/17, 19/19, 19/19→21,
+  21/21, 21/21→23 — strictly append-only, zero rewritten fields, no wire timestamps.
+  Combined with llama.cpp slot logs (LCP similarity 0.998, prompt-eval = new suffix
+  only), the request stream is prompt-cache-optimal between compactions.
+
+(handoff-eval batch + chain results appended below)
+
+### handoff-eval batch (4 real codex rollouts from 2026-08-22, Qwen3.8-27B v3, temp 0, seed 42)
+
+| transcript | probes | raw | spliced | full | handoff tokens |
+|---|---|---|---|---|---|
+| rollout…09-50-29 | intent | 0% | 100% | 100% | 1435 (2.1%) |
+| rollout…10-45-57 | intent | 100% | 100% | 100% | 1396 (5.1%) |
+| rollout…13-50-46 | intent | 0% | 100% | 100% | 1072 (2.3%) |
+| rollout…11-07-17 | intent | 0% | 100% | 100% | 1301 (2.4%) |
+| **AVERAGE** | | **25%** | **100%** | **100%** | ~2-5% of window |
+
+Replicates the README's central claim on the current model: the raw summary drops the
+user's live request 3 of 4 times; the mechanical splice carries it every time. (These
+rollouts derived only the intent probe — no write/edit ops for files probes.)
+
+## Mechanical-handoff audit (what the staples carry now)
+
+Carried deterministically: modified/read files (cumulative), last significant command +
+pass/fail (+exit), unresolved error, latest-user-request verbatim clip, **git-state
+(NEW: branch @ HEAD, dirty count)**, spill locators (via the summary text when results
+were spilled), window chain ids, checkride outcome. Deliberately NOT carried: raw env
+dumps and secrets (never stapled), cancellation semantics as a *parsed* fact (the
+verbatim latest-user-request carries the user's own words instead — no NLP guessing).
+Candidates left experimental: pending background process handles, required-tests-not-run.
+
+## Checkride audit summary
+
+Strengths kept: fixed probe templates, harness-only ground truth, no LLM judge,
+skip-not-guess, bounded escalation, never blocks compaction. Confirmed weaknesses
+(F11): cross-question credit is intentional but SUCCESS/FAILURE word lists can
+cross-match unrelated text; quiz context omits system prompt; memory-derived probes
+could reinforce stale state — mitigated now by relabeling the `next` preserve line
+("the latest user request OVERRIDES this if they conflict") and quiz budget 700→1500
+(local thinking models return empty answers at small budgets otherwise). Continuity
+probes are validated LIVE (perform-next-step, no-redo, exact-retrieval) rather than
+gating the compaction path.
+
+## Definition-of-done tracking
+
+1. Middle-marker exact retrieval after compaction + restart — **✅ live-verified**
+   (runs 3/4 + resume probe; unit tests cover multi-compaction-independence since
+   spill artifacts are outside session history entirely).
+2. No active-context pruning destroys the only canonical copy — **✅** (spill-first
+   hook; clearing tier and compaction were already non-destructive; pi's own bash
+   50KB tail-keep truncation happens UPSTREAM of any extension hook and remains the
+   one lossy layer mempact cannot intercept — its /tmp full-output spill file path is
+   surfaced in bash details; documented limitation).
+3. Search results carry stable provenance — **✅** (`e:<entryId>` / `spill:<id>`,
+   role/tool labels, model-written and off-branch tags).
+4. Exact-read behind every search result — **✅** (recall mode:"read", offset/limit).
+5. Active vs all-branch recall explicitly distinguishable — **✅** (scope param +
+   OFF-BRANCH labels).
+6. Latest user correction overrides stale memory/summaries — **✅ mechanism**
+   (STALE_INTENT_NOTE + <latest-user-request> staple last + memory-sourced probe
+   relabeling); live scenario run appended below.
+7. Cancelled work not restarted after compaction — live scenario run appended below.
+8. Tool-call/result pairs remain valid — **✅** (pi-side pairing + normalize.ts on
+   the summarization path; pinned by existing normalize tests).
+9. Crash recovery produces structurally valid session — **✅ within pi's contract**
+   (append-only JSONL; torn lines skipped on load; spill index tolerates torn tail —
+   tested; residual risk: pi's deferred first flush window, documented).
+10. Every checkpoint records what it replaced + fact sources — **✅ partially**:
+    `details.mempact` records retained users, window chain, file lists, checkride
+    outcome; the shadowed entries remain in the JSONL under the compaction's
+    firstKept sentinel. Deterministic staples are labeled by origin in the summary
+    text. (Full DeepSeek-style sourceEventSeqs would need pi core changes.)
+11. Builds and runs against current pi — **✅** (typecheck + 147 tests + live 0.84.2
+    runs; runtime feature-detection keeps 0.78-0.80 compatibility).
+12. Checkride + continuity across repeated compaction chains — checkride ✅ live
+    (2/2 twice); multi-window chain covered by handoff-eval CHAIN mode below.
+13. Canonical vs model-visible retention distinguished throughout this report — ✅.
+14. No "lossless" claim without test proof — the only remaining lossy layer is pi's
+    upstream bash truncation (item 2); README wording updated accordingly.

@@ -190,7 +190,10 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
         question: "What is the exact next action to take?",
         groups,
         minGroups,
-        preserveLine: `Exact next step: ${clipLine(facts.memoryNext, 300)}`,
+        // labeled as memory-sourced, not as a command: if the latest user
+        // message cancelled or replaced this step, the user message wins -
+        // an unlabeled "Exact next step:" splice would revive cancelled work
+        preserveLine: `Next step recorded in project memory (the latest user request OVERRIDES this if they conflict): ${clipLine(facts.memoryNext, 300)}`,
       });
   }
 

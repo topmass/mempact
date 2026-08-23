@@ -894,19 +894,43 @@ export default function (pi: ExtensionAPI) {
   // carries an exact locator. Spill failure falls back to the pure codex
   // behavior (fail-open) - the cap itself is never skipped.
   // -------------------------------------------------------------------------
+  const SPILL_SOURCE_FILE_CAP_BYTES = 8 * 1024 * 1024;
   pi.on("tool_result", (event, ctx) => {
     const policy = mulPolicy(DEFAULT_TRUNCATION_POLICY, SERIALIZATION_BUDGET_MULTIPLIER);
     const capBytes = byteBudget(policy);
     const encoder = new TextEncoder();
+    // pi's bash accumulator truncates streams >50KB/2000 lines (tail-keep)
+    // BEFORE this hook runs, but exposes its own ephemeral full spill at
+    // details.fullOutputPath (os tmpdir - gone on reboot). When present and
+    // sane, that file is the TRUE full output; copy it into the durable
+    // store so even the pi-destroyed head stays recoverable.
+    let fullSource: string | null = null;
+    const fullOutputPath = (event.details as { fullOutputPath?: string } | undefined)
+      ?.fullOutputPath;
+    if (typeof fullOutputPath === "string") {
+      try {
+        const text = readFileSync(fullOutputPath, "utf8");
+        if (encoder.encode(text).length <= SPILL_SOURCE_FILE_CAP_BYTES) fullSource = text;
+      } catch {
+        // ephemeral file already gone; fall back to the hook-visible text
+      }
+    }
     let changed = false;
     const content = event.content.map((c) => {
-      if (c.type !== "text" || encoder.encode(c.text).length <= capBytes) return c;
+      if (c.type !== "text") return c;
+      const hookBytes = encoder.encode(c.text).length;
+      const needsCap = hookBytes > capBytes;
+      const haveBiggerSource = fullSource != null && encoder.encode(fullSource).length > hookBytes;
+      if (!needsCap && !haveBiggerSource) return c;
       changed = true;
-      const fullBytes = encoder.encode(c.text).length;
-      const preview = truncateMiddleChars(c.text, byteBudget(DEFAULT_TRUNCATION_POLICY));
-      const ref = spillFullOutput(ctx.cwd, event.toolCallId, event.toolName, c.text);
-      if (!ref) return { ...c, text: preview }; // fail-open: codex-verbatim behavior
-      const omitted = Math.max(0, fullBytes - encoder.encode(preview).length);
+      const source = haveBiggerSource ? fullSource! : c.text;
+      const sourceBytes = encoder.encode(source).length;
+      const preview = needsCap
+        ? truncateMiddleChars(c.text, byteBudget(DEFAULT_TRUNCATION_POLICY))
+        : c.text;
+      const ref = spillFullOutput(ctx.cwd, event.toolCallId, event.toolName, source);
+      if (!ref) return needsCap ? { ...c, text: preview } : c; // fail-open
+      const omitted = Math.max(0, sourceBytes - encoder.encode(preview).length);
       return { ...c, text: `${preview}\n${spillNotice(ref, omitted)}` };
     });
     return changed ? { content } : undefined;
