@@ -32,7 +32,7 @@ const textOf = (content: unknown): string =>
       : "";
 
 const ANCHOR_PATTERNS: RegExp[] = [
-  /https?:\/\/[^\s)"'<>\]]+/g, // URLs
+  /https?:\/\/[^\s)"'<>\]\\]+/g, // URLs (escaped tool output puts backslashes right after them)
   // git SHAs: hex with both digits and letters, not glued into a path or
   // filename (pi's /tmp/pi-bash-<hex>.log pointers are not commits)
   /(?<![-/\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g,
@@ -44,12 +44,16 @@ const ANCHOR_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Identifiers ranked by document frequency (one count per message, so a
- * single log dump cannot flood the index), ties broken by first appearance.
+ * Identifiers ranked by weighted document frequency: one count per message
+ * (a single log dump cannot flood the index), and a mention in user or
+ * assistant text counts 3x a mention inside tool output, so the PR numbers
+ * and SHAs the conversation talked about outrank ten unique CI-run URLs
+ * from one `gh run list`. Ties break by first appearance.
  */
 export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHORS): string[] {
   const df = new Map<string, number>();
   for (const m of messages) {
+    const weight = m.role === "user" || m.role === "assistant" ? 3 : 1;
     // UUIDs (session ids in harness wrappers) would otherwise shed hex
     // fragments that look like commit SHAs
     const text = textOf(m.content).replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
@@ -62,7 +66,7 @@ export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHO
         if (token.length >= 3 && (token.startsWith("#") || token.length >= 5)) seen.add(token);
       }
     }
-    for (const token of seen) df.set(token, (df.get(token) ?? 0) + 1);
+    for (const token of seen) df.set(token, (df.get(token) ?? 0) + weight);
   }
   return [...df.entries()]
     .sort((a, b) => b[1] - a[1])

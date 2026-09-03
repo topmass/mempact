@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="tests: 127 passing" src="https://img.shields.io/badge/tests-127%20passing-201b15">
+  <img alt="tests: 128 passing" src="https://img.shields.io/badge/tests-128%20passing-201b15">
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
   <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
@@ -129,6 +129,11 @@ flipped the same way after its label. Full assembly now scores about 90%
 first try, and most sessions reach 100% after at most one retry, while a
 naive summary gets WORSE as windows grow (25% average at 70k slices, 15%
 at 160k). The bigger the context, the more the machinery matters.
+Re-run 2026-09-03 with the anchor and rule staples (Qwen3.8 27B,
+reasoning off, 7 transcripts including 3 codex rollouts): raw 0 to
+100% (average 26%), spliced and full assembly 100% on all 7, no retry
+needed. The anchor probe also made rollouts with no file tools scorable
+at all.
 
 | | codex (remote) | Claude Code | Letta | Hermes | pi / OpenClaw | **mempact** |
 |---|---|---|---|---|---|---|
@@ -192,7 +197,7 @@ import {
 ## Development
 
 ```bash
-pnpm install && pnpm test   # 127 vitest cases, incl. byte-exact codex parity
+pnpm install && pnpm test   # 128 vitest cases, incl. byte-exact codex parity
 ```
 
 Base engine derived from [openai/codex](https://github.com/openai/codex)

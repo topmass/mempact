@@ -66,3 +66,19 @@ describe("user constraints", () => {
     expect(renderUserConstraints(["Never X."])).toBe("<user-constraints>\n- Never X.\n</user-constraints>");
   });
 });
+
+describe("anchors probe grading", () => {
+  it("accepts a URL by its tail or a long numeric id, and weights conversation over tool output", async () => {
+    const { buildProbes, gradeQuiz } = await import("../core/checkride.ts");
+    const [probe] = buildProbes({
+      anchors: ["https://github.com/o/r/actions/runs/31544810988/job/93954969229", "https://github.com/o/r/pull/2065"],
+    });
+    expect(gradeQuiz([probe!], "run 31544810988 failed; see pull/2065").failed).toHaveLength(0);
+    expect(gradeQuiz([probe!], "nothing specific").failed).toHaveLength(1);
+    const ranked = collectAnchors([
+      msg("toolResult", "https://ci.io/run/1\nhttps://ci.io/run/2"),
+      msg("assistant", "the fix is in https://ci.io/run/2"),
+    ]);
+    expect(ranked[0]).toBe("https://ci.io/run/2");
+  });
+});

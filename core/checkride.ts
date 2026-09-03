@@ -176,11 +176,20 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
 
   if (facts.anchors && facts.anchors.length > 0) {
     const top = facts.anchors.slice(0, 6);
+    // a URL counts by its tail too ("pull/2065", "job/93954969229") or by
+    // any long numeric id in it - models cite runs and PRs that way rather
+    // than reproducing 90-char links (batch eval on codex rollouts)
+    const alternatives = (a: string): string[] => {
+      if (!/^https?:\/\//.test(a)) return [a];
+      const segments = a.replace(/\/+$/, "").split("/").slice(3);
+      const ids = segments.filter((s) => /^\d{6,}$/.test(s));
+      return [a, ...(segments.length >= 2 ? [segments.slice(-2).join("/")] : []), ...ids];
+    };
     probes.push({
       id: "anchors",
       question:
         "List the exact identifiers referenced in the work so far: URLs, commit hashes, PR or issue numbers, error codes.",
-      groups: top.map((a) => [a]),
+      groups: top.map(alternatives),
       minGroups: Math.max(1, Math.ceil(top.length * 0.5)),
       preserveLine: `Key identifiers (verbatim): ${top.join(", ")}`,
     });
