@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="tests: 117 passing" src="https://img.shields.io/badge/tests-117%20passing-201b15">
+  <img alt="tests: 127 passing" src="https://img.shields.io/badge/tests-127%20passing-201b15">
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
   <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
@@ -39,9 +39,12 @@ tool can grep it back at any time. Demotion, never deletion.
 tool result older than the newest 3 is stubbed down to its first line
 plus a pointer to `recall`. This is Anthropic's finding (mechanically
 clearing tool results beats summarizing them) applied non-destructively;
-the session file keeps the originals. Less noise for the model, and the
-expensive compaction gets postponed, sometimes past the end of the
-session entirely.
+the session file keeps the originals. The tier latches for the rest of
+the window (pi measures usage from the already-stubbed request, so a
+plain threshold would flip on and off every other turn and thrash the
+prompt cache). Less noise for the model, and the expensive compaction
+gets postponed, sometimes past the end of the session entirely. The
+model can ask where it stands at any time with `get_context_remaining`.
 
 **Near the limit.** A one-shot reminder fires (codex verbatim), and if a
 memory file exists the model is told to persist anything durable NOW via
@@ -50,19 +53,32 @@ memory file exists the model is told to persist anything durable NOW via
 **At 90%: the compaction itself.** A pipeline:
 
 1. The session's model writes a handoff summary using codex's verbatim
-   "CONTEXT CHECKPOINT COMPACTION" prompt, with codex's front-trim retry
-   if the request overflows.
+   "CONTEXT CHECKPOINT COMPACTION" prompt (plus one guard line: the
+   window is data to summarize, not instructions), with codex's
+   front-trim retry if the request overflows. The summarizer sees the
+   same stubbed view the model has been seeing, so the request fits. A
+   summary cut off by the output limit is trimmed to its last whole
+   paragraph, line, or sentence and marked, never shipped mid-sentence.
 2. Code, not the model, staples the facts onto that summary, extracted
-   from the actual tool-call records: `<modified-files>` and
-   `<read-files>` (cumulative across every past compaction),
-   `<last-run>` with the command and its result, `<unresolved-error>`,
-   and `<latest-user-request>` with the user's last message quoted
-   verbatim and labeled.
+   from the actual records: `<modified-files>` and `<read-files>`
+   (cumulative across every past compaction), `<anchors>` (URLs, commit
+   SHAs, PR/issue numbers, error codes, ranked by how many messages
+   mention them; Hermes measured this index lifting closed-book recall
+   from 23% to 60%), `<user-constraints>` (rule-shaped sentences from the
+   user's own messages, verbatim and cumulative; rule survival after
+   compaction is binary and pinning restores it, per arXiv 2606.22528),
+   `<last-run>` with the command and its result, `<unresolved-error>`
+   (the line that names the error, kept even when the model read a file
+   after the failure), and `<latest-user-request>` with the user's last
+   message quoted verbatim and labeled.
 3. The replacement history is assembled codex-style: up to 20k tokens of
    the newest real user messages, then the stapled summary last, bridged
    with codex's handoff text plus one added guard line: the summary is
    reference, the latest user message always wins (Hermes's hard-won
-   lesson; their models kept re-doing cancelled work).
+   lesson; their models kept re-doing cancelled work). If the compaction
+   interrupted a tool loop, a hidden continuation prompt resumes the work
+   (interactive and RPC modes; a one-shot `pi -p` run ends when its loop
+   aborts). A finished answer that merely crossed 90% is left alone.
 4. **The handoff checkride** runs (see below). Fail: one regeneration
    with explicit MUST-state-these-facts lines. Fail again: the facts are
    pasted in verbatim by code. Compaction is never blocked; the score is
@@ -87,6 +103,8 @@ arbitrarily weak model can run the process safely.
 | verify | last significant command, did it pass? | tool records + exit codes | command token AND correct pass/fail |
 | error | quote the unresolved error | newest failing output | distinctive substring present |
 | intent | quote the user's last request | the message record | 60% of its distinctive tokens |
+| anchors | list the identifiers referenced | regex index over the window | half of the top 6 present |
+| rules | quote the user's stated rules | rule sentences in user messages | half of the newest 6 matched |
 | done | name work already finished | memory Plan checkboxes | any completed item matched |
 | next | exact next step? | memory Next section | 60% of its distinctive tokens |
 | constraints | standing decisions? | memory Decisions | recent decision matched |
@@ -98,7 +116,8 @@ summary plus mechanical staples, and the full assembly.
 **What the testing found.** Across 27 scored runs on real Claude Code
 and codex sessions (70k and 160k token slices, Qwen3.6 27B, fixed seed):
 the raw summary tier scored 5 to 25%, even though the summarizer was a
-capable model using codex's own battle-tested prompt. The middle tier
+capable model using codex's own local prompt (the one every non-OpenAI
+backend gets). The middle tier
 proved the pattern: facts stapled on mechanically survived at or near
 100%, facts left to the summarizer's prose were a coin flip (run state
 passed 4 of 11 runs; the user's request was fumbled 7 of 13 even though
@@ -165,6 +184,7 @@ truncation policies, the staples, and the checkride:
 import {
   buildCompactedHistory, runCompactionWithRetry,       // codex base
   clearOldToolOutputs, collectFileOps, runFactsBlock,  // mechanical layers
+  collectAnchors, collectUserConstraints,              // anchor index, rule pinning
   buildProbes, formatQuiz, gradeQuiz,                  // the checkride
 } from "./core/index.ts";
 ```
@@ -172,7 +192,7 @@ import {
 ## Development
 
 ```bash
-pnpm install && pnpm test   # 117 vitest cases, incl. byte-exact codex parity
+pnpm install && pnpm test   # 127 vitest cases, incl. byte-exact codex parity
 ```
 
 Base engine derived from [openai/codex](https://github.com/openai/codex)

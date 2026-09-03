@@ -19,6 +19,32 @@ describe("checkride probes", () => {
     expect(probes.map((p) => p.id)).toEqual(["files", "intent"]);
   });
 
+  it("rules probe cannot be satisfied by one rule when all share a leading word", () => {
+    const [probe] = buildProbes({
+      userConstraints: [
+        "Never edit files under vendor/.",
+        "Never commit secrets to the repo.",
+        "Never merge without approval.",
+        "Never restart the dev server.",
+      ],
+    });
+    expect(probe!.id).toBe("rules");
+    expect(gradeQuiz([probe!], "Never edit files under vendor/.").failed).toHaveLength(1);
+    expect(
+      gradeQuiz([probe!], "Never edit files under vendor/. Never commit secrets to the repo.").failed,
+    ).toHaveLength(0);
+  });
+
+  it("a rule with no distinct token still counts: quoting 1 of 3 fails, 2 of 3 passes", () => {
+    const [probe] = buildProbes({
+      userConstraints: ["Never use npm.", "Never use yarn.", "Never use pnpm."],
+    });
+    expect(probe!.groups).toHaveLength(3);
+    expect(probe!.minGroups).toBe(2);
+    expect(gradeQuiz([probe!], "Never use yarn.").failed).toHaveLength(1);
+    expect(gradeQuiz([probe!], "Never use npm. Never use yarn.").failed).toHaveLength(0);
+  });
+
   it("no facts, no probes", () => {
     expect(buildProbes({})).toEqual([]);
   });
@@ -117,9 +143,22 @@ describe("extractRunFacts", () => {
     expect(lastError).toBe("3 failed");
   });
 
-  it("a healthy newest result clears lastError", () => {
-    const ok = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "read", isError: false, content: [{ type: "text", text: "file contents" }] }];
+  it("a healthy newest RUN clears lastError", () => {
+    const ok = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "bash", isError: false, content: [{ type: "text", text: "all green" }] }];
     expect(extractRunFacts(ok).lastError).toBeUndefined();
+  });
+
+  it("a read after a failed run does not resolve the failure", () => {
+    const investigating = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "read", isError: false, content: [{ type: "text", text: "file contents" }] }];
+    expect(extractRunFacts(investigating).lastError).toBe("3 failed");
+  });
+
+  it("picks the line that names the error, not the command echo (pi bash puts the exit status last)", () => {
+    const piShape = [
+      messages[0]!,
+      { role: "toolResult", toolCallId: "c1", toolName: "bash", isError: true, content: [{ type: "text", text: "> mempact@0.2.0 test\n> vitest run\n\n FAIL  test/x.test.ts > adds\nAssertionError: expected 1 to be 2\n\nCommand exited with code 1" }] },
+    ];
+    expect(extractRunFacts(piShape).lastError).toBe("FAIL  test/x.test.ts > adds");
   });
 
   it("prefers the newest significant command over housekeeping trivia", () => {

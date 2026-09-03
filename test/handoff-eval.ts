@@ -21,6 +21,7 @@ import { basename } from "node:path";
 import { SUMMARIZATION_PROMPT, collectUserMessages, buildCompactedHistory, summaryBridgeText } from "../core/compact.ts";
 import { messageText, type HistoryItem } from "../core/items.ts";
 import { collectFileOps, renderFileOps } from "../core/fileOps.ts";
+import { collectAnchors, collectUserConstraints, renderAnchors, renderUserConstraints } from "../core/anchors.ts";
 import {
   buildProbes,
   extractRunFacts,
@@ -278,12 +279,16 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
   const fileOps = collectFileOps(slice);
   const run = extractRunFacts(slice);
   const lastUser = [...slice].reverse().find(isRealUserMessage);
+  const anchors = collectAnchors(slice);
+  const userConstraints = collectUserConstraints(slice.filter(isRealUserMessage).map(textOf));
   const memoryMd = MEMORY_FILE ? readFileSync(MEMORY_FILE, "utf8") : undefined;
   const probes = buildProbes({
     modifiedFiles: fileOps.modifiedFiles,
     lastRun: run.lastRun,
     lastError: run.lastError,
     lastUserMessage: lastUser ? textOf(lastUser) : undefined,
+    anchors,
+    userConstraints,
     memoryNext: memoryMd ? getSection(memoryMd, "Next") : undefined,
     memoryDoneItems: memoryMd
       ? getSection(memoryMd, "Plan").split("\n").filter((l) => /\[x\]/i.test(l))
@@ -302,6 +307,8 @@ async function runOne(path: string, verbose: boolean): Promise<Row | null> {
   const summary = await chat([...toChat(slice), { role: "user", content: SUMMARIZATION_PROMPT }], MAX_SUMMARY_TOKENS);
   const spliceBlock = [
     renderFileOps(fileOps),
+    renderAnchors(anchors),
+    renderUserConstraints(userConstraints),
     runFactsBlock({ ...run, lastUserMessage: lastUser ? textOf(lastUser) : undefined }),
   ]
     .filter(Boolean)

@@ -22,3 +22,4 @@ export * from "./toolClearing.ts";
 export * from "./fileOps.ts";
 export * from "./recall.ts";
 export * from "./checkride.ts";
+export * from "./anchors.ts";

@@ -37,6 +37,10 @@ export interface HandoffFacts {
   /** most recent unresolved error line (only when the newest result failed) */
   lastError?: string;
   lastUserMessage?: string;
+  /** anchor index (core/anchors.ts): URLs, SHAs, PR refs, error codes */
+  anchors?: string[];
+  /** verbatim rule sentences from user messages, cumulative */
+  userConstraints?: string[];
   memoryNext?: string;
   /** checked-off plan items, e.g. lines starting "[x]" */
   memoryDoneItems?: string[];
@@ -168,6 +172,38 @@ export function buildProbes(facts: HandoffFacts): Probe[] {
         minGroups,
         preserveLine: `Latest user request (verbatim): "${quote}"`,
       });
+  }
+
+  if (facts.anchors && facts.anchors.length > 0) {
+    const top = facts.anchors.slice(0, 6);
+    probes.push({
+      id: "anchors",
+      question:
+        "List the exact identifiers referenced in the work so far: URLs, commit hashes, PR or issue numbers, error codes.",
+      groups: top.map((a) => [a]),
+      minGroups: Math.max(1, Math.ceil(top.length * 0.5)),
+      preserveLine: `Key identifiers (verbatim): ${top.join(", ")}`,
+    });
+  }
+
+  if (facts.userConstraints && facts.userConstraints.length > 0) {
+    const recent = facts.userConstraints.slice(-6);
+    // only tokens DISTINCT to each rule count: "Never ..." x4 would otherwise
+    // all pass on one quoted rule; a rule with no distinct token keeps its
+    // full text as the group so it still counts toward the requirement
+    // (sol review, 2026-09-03)
+    const sets = recent.map((c) => rareTokens(c, 4).map((t) => t.toLowerCase()));
+    const groups = sets.map((set, i) => {
+      const distinct = set.filter((t) => !sets.some((other, j) => j !== i && other.includes(t)));
+      return distinct.length > 0 ? distinct : [recent[i]!.toLowerCase()];
+    });
+    probes.push({
+      id: "rules",
+      question: "What rules or constraints did the user state that must be respected? Quote them.",
+      groups,
+      minGroups: Math.max(1, Math.ceil(recent.length * 0.5)),
+      preserveLine: `User-stated rules (verbatim): ${recent.map((c) => clipLine(c, 160)).join(" | ")}`,
+    });
   }
 
   if (facts.memoryDoneItems && facts.memoryDoneItems.length > 0) {
@@ -320,6 +356,16 @@ const sniffExit = (text: string): number | undefined => {
   return m ? Number(m[1]) : undefined;
 };
 
+/** The most informative line of a failing output: the first line that names
+ *  an error, else the first line. pi's bash appends "Command exited with code
+ *  N" AFTER the body, so the first line alone is usually just a command echo. */
+const errorLine = (text: string): string => {
+  const hit = text.split("\n").find((l) => /\b(err|error|fail(ed|ure)?|exception|panic|traceback|fatal)\b/i.test(l));
+  return clipLine(hit ?? text);
+};
+
+const RUN_TOOL = /bash|shell|exec|run|terminal|command/i;
+
 /** Newest run-tool result (bash/shell/exec/terminal) with its command, plus
  *  the newest unresolved error (only if the last tool result failed). */
 export function extractRunFacts(messages: readonly MessageLike[]): {
@@ -348,12 +394,16 @@ export function extractRunFacts(messages: readonly MessageLike[]): {
     const m = messages[i]!;
     if (m.role !== "toolResult") continue;
     const text = textOfBlocks(m.content);
+    const isRun = RUN_TOOL.test(m.toolName ?? "");
     if (lastError === undefined) {
       const exit = sniffExit(text);
-      if (m.isError || (exit != null && exit !== 0)) lastError = clipLine(text);
-      else lastError = ""; // newest result is fine -> no unresolved error
+      if (m.isError || (exit != null && exit !== 0)) lastError = errorLine(text);
+      // a successful read/grep/edit after a failed run does not resolve the
+      // failure ("test fails, model reads a file, compaction fires" lost the
+      // error text) - only the newest successful RUN clears it
+      else if (isRun) lastError = "";
     }
-    if (!significantRun && /bash|shell|exec|run|terminal|command/i.test(m.toolName ?? "")) {
+    if (!significantRun && isRun) {
       const command = (m.toolCallId && commandsById.get(m.toolCallId)) || undefined;
       if (command) {
         const run: RunFact = {

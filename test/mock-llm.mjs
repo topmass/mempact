@@ -56,13 +56,27 @@ createServer((req, res) => {
 
     // Magic prompts to make the model "call" tools deterministically.
     let toolCall = null;
-    if (!isCompaction && !midTurn) {
+    // USE_BASH_LOOP: keep calling bash until LOOP_CALLS results exist after the
+    // prompt - a multi-step agent loop in ONE process (mid-turn clearing,
+    // mid-turn compaction, auto-continue).
+    // (mempact steers reminder/continue notes in as user-role messages, so
+    // locate the loop prompt itself rather than "the last user message")
+    let ui = msgs.length - 1;
+    while (ui >= 0 && !(msgs[ui].role === "user" && JSON.stringify(msgs[ui].content ?? "").includes("USE_BASH_LOOP"))) ui--;
+    const loopCalls = Number(process.env.LOOP_CALLS ?? 4);
+    const loopActive = ui >= 0 && !flat.includes("Another language model started to solve this problem") &&
+      msgs.slice(ui + 1).filter((m) => m.role === "tool").length < loopCalls;
+    if (!isCompaction && loopActive)
+      toolCall = { id: `call_bl${Date.now()}`, name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
+    else if (!isCompaction && !midTurn) {
       if (lastText.includes("USE_NEW_CONTEXT"))
         toolCall = { id: `call_nc${Date.now()}`, name: "new_context", arguments: "{}" };
       else if (lastText.includes("USE_BASH_BIG"))
         toolCall = { id: `call_bb${Date.now()}`, name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
       else if (lastText.includes("USE_READ_FILE"))
         toolCall = { id: `call_rf${Date.now()}`, name: "read", arguments: JSON.stringify({ path: "notes.txt" }) };
+      else if (lastText.includes("USE_CONTEXT_REMAINING"))
+        toolCall = { id: `call_cr${Date.now()}`, name: "get_context_remaining", arguments: "{}" };
       else if (lastText.includes("USE_RECALL"))
         toolCall = { id: `call_rc${Date.now()}`, name: "recall", arguments: JSON.stringify({ query: "18001" }) };
       else if (lastText.includes("USE_UPDATE_MEMORY"))
@@ -77,8 +91,13 @@ createServer((req, res) => {
         };
     }
 
+    // SUMMARY_FINISH=length: the summary arrives cut off (finish_reason
+    // "length") - exercises mempact's truncated-summary handling.
+    const summaryCut = process.env.SUMMARY_FINISH === "length";
     const text = isCompaction
-      ? "MOCK HANDOFF SUMMARY: goal X, decisions Y, next steps Z."
+      ? summaryCut
+        ? process.env.SUMMARY_CUT_TEXT ?? "MOCK HANDOFF SUMMARY: goal X, decisions Y.\n\nNext steps: do NOT re-run the migr"
+        : "MOCK HANDOFF SUMMARY: goal X, decisions Y, next steps Z."
       : midTurn
         ? "tool finished, done."
         : `ack. ${"filler word soup. ".repeat(Math.ceil((FILLER_TOKENS * 4) / 18))}`;
@@ -119,7 +138,7 @@ createServer((req, res) => {
       sse(res, {
         id,
         object: "chat.completion.chunk",
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        choices: [{ index: 0, delta: {}, finish_reason: isCompaction && summaryCut ? "length" : "stop" }],
         usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
       });
       res.write("data: [DONE]\n\n");
