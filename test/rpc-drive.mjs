@@ -27,6 +27,7 @@ const PI_DIR = process.env.PI_DIR ?? "/tmp/mempact-e2e/agent";
 const WORK = process.env.WORK ?? "/tmp/mempact-e2e/work";
 const REQUESTS = join(here, "requests.jsonl");
 const QUIET_MS = 4000; // auto-continue starts a fresh agent run after compaction
+const PROMPT_TIMEOUT_MS = Number(process.env.PROMPT_TIMEOUT_MS ?? 120_000); // real models: raise it
 const eventsLog = `${session}.events`;
 writeFileSync(eventsLog, "");
 writeFileSync(REQUESTS, "");
@@ -67,7 +68,7 @@ for (const p of prompts) {
   pi.stdin.write(`${JSON.stringify({ type: "prompt", message: p })}\n`);
   console.log(`> ${p}`);
   const started = Date.now();
-  while (Date.now() - started < 120_000) {
+  while (Date.now() - started < PROMPT_TIMEOUT_MS) {
     await sleep(500);
     if (idle && Date.now() - lastEvent > QUIET_MS) break;
   }

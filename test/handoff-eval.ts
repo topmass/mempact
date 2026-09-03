@@ -10,8 +10,8 @@
  * Run:  node test/handoff-eval.ts <transcript.jsonl> [more transcripts...]
  *       Accepts Claude Code project transcripts AND codex rollout files
  *       (format auto-detected). Multiple paths -> batch table.
- * Env:  ENDPOINT (default http://127.0.0.1:8080/v1)  MODEL (llamacpp)
- *       TOKEN_BUDGET (70000)  MAX_SUMMARY_TOKENS (4096)
+ * Env:  ENDPOINT (default http://127.0.0.1:8080/v1)  MODEL (llamacpp)  QUIZ_REASONING (low; "" omits)
+ *       TOKEN_BUDGET (70000)  MAX_SUMMARY_TOKENS (8192)  MAX_QUIZ_TOKENS (6000)
  *
  * Requires Node >= 23.6 (native type stripping). No dependencies.
  */
@@ -36,7 +36,13 @@ import { getSection, renderForContext } from "../core/memory.ts";
 const ENDPOINT = process.env.ENDPOINT ?? "http://127.0.0.1:8080/v1";
 const MODEL = process.env.MODEL ?? "llamacpp";
 const TOKEN_BUDGET = Number(process.env.TOKEN_BUDGET ?? 70_000);
-const MAX_SUMMARY_TOKENS = Number(process.env.MAX_SUMMARY_TOKENS ?? 4096);
+const MAX_SUMMARY_TOKENS = Number(process.env.MAX_SUMMARY_TOKENS ?? 8192); // xhigh thinking alone hit 3.2k
+/** Reasoning models spend the output budget thinking first: 900 left the
+ *  quiz answer EMPTY at xhigh (2026-09-03), so the cap must cover thinking. */
+const MAX_QUIZ_TOKENS = Number(process.env.MAX_QUIZ_TOKENS ?? 6000);
+/** Quiz calls send OpenAI-style reasoning_effort, as the extension asks
+ *  pi-ai for "low" (llama.cpp rejects "minimal"); "" omits the field. */
+const QUIZ_REASONING = process.env.QUIZ_REASONING ?? "low";
 const TOOL_RESULT_CAP = 10_000; // bytes, mirrors the engine's ingestion cap
 /** Optional .mempact/memory.md to exercise the done/next/constraints probes
  *  (injected into the full assembly exactly as the pi extension does). */
@@ -220,18 +226,30 @@ const isRealUserMessage = (m: NeutralMessage): boolean =>
 // Model calls (plain OpenAI-compatible HTTP, temperature 0)
 // ---------------------------------------------------------------------------
 
-async function chat(messages: { role: string; content: string }[], maxTokens: number): Promise<string> {
+async function chat(messages: { role: string; content: string }[], maxTokens: number, reasoningEffort?: string): Promise<string> {
   const started = Date.now();
   const res = await fetch(`${ENDPOINT}/chat/completions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: MODEL, messages, temperature: 0, seed: 42, max_tokens: maxTokens }),
+    body: JSON.stringify({
+      model: MODEL,
+      messages,
+      temperature: 0,
+      seed: 42,
+      max_tokens: maxTokens,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    }),
     signal: AbortSignal.timeout(600_000),
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  const body = (await res.json()) as { choices: { message: { content: string } }[] };
-  console.log(`    (model call: ${((Date.now() - started) / 1000).toFixed(1)}s)`);
-  return body.choices[0]?.message.content ?? "";
+  const body = (await res.json()) as {
+    choices: { message: { content: string; reasoning_content?: string }; finish_reason?: string }[];
+    usage?: { completion_tokens?: number };
+  };
+  const choice = body.choices[0];
+  const thought = choice?.message.reasoning_content ? ` thinking ~${Math.ceil(choice.message.reasoning_content.length / 4)}tok` : "";
+  console.log(`    (model call: ${((Date.now() - started) / 1000).toFixed(1)}s, ${body.usage?.completion_tokens ?? "?"} out${thought}, ${choice?.finish_reason})`);
+  return choice?.message.content ?? "";
 }
 
 /** Role-preserving flatten for the summarization request. */
@@ -266,7 +284,7 @@ async function quizContext(contextTexts: string[], probes: Probe[]) {
     ...contextTexts.map((t) => ({ role: "user", content: t })),
     { role: "user", content: formatQuiz(probes) },
   ];
-  const answer = await chat(messages, 900);
+  const answer = await chat(messages, MAX_QUIZ_TOKENS, QUIZ_REASONING);
   return { ...gradeQuiz(probes, answer), answer };
 }
 

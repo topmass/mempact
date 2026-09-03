@@ -130,6 +130,16 @@ const THRASH_MIN_SAVINGS_FRACTION = 0.1;
  * core/checkride.ts for the full standard.
  */
 const CHECKRIDE_ENABLED = true;
+/**
+ * The quiz is pure recall, so it runs at low reasoning effort (pi-ai maps
+ * it per provider; "minimal" is rejected by llama.cpp). Thinking models spend
+ * the output budget deliberating first: at xhigh a 700-token cap returned an
+ * EMPTY answer every time (2026-09-03), which would have failed every probe
+ * and fired the full-window retry on every compaction. Low effort measured
+ * ~1.3k thinking + answer; 6k leaves room. An empty answer is treated as
+ * inconclusive, never as failure.
+ */
+const CHECKRIDE_MAX_TOKENS = 6000;
 
 /**
  * Stale-intent guard (Hermes lineage - their top recurring failure was the
@@ -190,7 +200,15 @@ interface MempactDetails {
     /** cumulative verbatim user rules (core/anchors.ts), capped in core */
     userConstraints?: string[];
     /** handoff checkride outcome for this compaction */
-    checkride?: { asked: number; passed: number; failed: string[]; retried: boolean; spliced: boolean };
+    checkride?: {
+      asked: number;
+      passed: number;
+      failed: string[];
+      retried: boolean;
+      spliced: boolean;
+      /** the quiz-taker returned no answer text (e.g. thinking ate the budget) */
+      inconclusive?: boolean;
+    };
   };
 }
 
@@ -522,19 +540,23 @@ export default function (pi: ExtensionAPI) {
                 systemPrompt: "You answer verification questions strictly from the provided record.",
                 messages: quizMessages,
               },
-              { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: 700, signal },
+              { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: CHECKRIDE_MAX_TOKENS, reasoning: "low", signal },
             );
             const answer = response.content
               .filter((c): c is TextContent => c.type === "text")
               .map((c) => c.text)
               .join("\n");
-            return gradeQuiz(probes, answer);
+            return { ...gradeQuiz(probes, answer), answered: answer.trim().length > 0 };
           };
 
           let result = await quiz(summary);
           let retried = false;
           let spliced = false;
-          if (result.failed.length > 0) {
+          if (!result.answered) {
+            // no answer at all says nothing about the handoff; do not spend a
+            // second full-window call on it
+            checkride = { asked: probes.length, passed: 0, failed: [], retried, spliced, inconclusive: true };
+          } else if (result.failed.length > 0) {
             retried = true;
             try {
               const retryPrompt = `${promptText}\n\n${mustPreserveSection(result.failed)}`;
@@ -566,7 +588,7 @@ export default function (pi: ExtensionAPI) {
               summary = `${summary}\n\n${handoffFactsBlock(result.failed)}`;
             }
           }
-          checkride = {
+          checkride ??= {
             asked: probes.length,
             passed: probes.length - result.failed.length,
             failed: result.failed.map((p) => p.id),
@@ -967,7 +989,9 @@ export default function (pi: ExtensionAPI) {
       const cr = lastEntry ? getMempactDetails(lastEntry)?.checkride : undefined;
       if (cr)
         lines.push(
-          `last handoff checkride: ${cr.passed}/${cr.asked} passed${cr.retried ? ", retried" : ""}${cr.spliced ? `, spliced facts: ${cr.failed.join("/")}` : ""}`,
+          cr.inconclusive
+            ? `last handoff checkride: inconclusive (${cr.asked} asked, quiz-taker returned no answer)`
+            : `last handoff checkride: ${cr.passed}/${cr.asked} passed${cr.retried ? ", retried" : ""}${cr.spliced ? `, spliced facts: ${cr.failed.join("/")}` : ""}`,
         );
       ctx.ui.notify(lines.join("\n"), "info");
     },

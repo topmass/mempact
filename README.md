@@ -129,11 +129,14 @@ flipped the same way after its label. Full assembly now scores about 90%
 first try, and most sessions reach 100% after at most one retry, while a
 naive summary gets WORSE as windows grow (25% average at 70k slices, 15%
 at 160k). The bigger the context, the more the machinery matters.
-Re-run 2026-09-03 with the anchor and rule staples (Qwen3.8 27B,
-reasoning off, 7 transcripts including 3 codex rollouts): raw 0 to
-100% (average 26%), spliced and full assembly 100% on all 7, no retry
-needed. The anchor probe also made rollouts with no file tools scorable
-at all.
+Re-run 2026-09-03 with the anchor and rule staples (Qwen3.8 27B, 7
+transcripts including 3 codex rollouts): spliced and full assembly 100%
+on all 7 with no retry, at reasoning off and at xhigh alike. The raw
+tier is where reasoning shows: 26% average with thinking off, 38% at
+xhigh (0 to 100% per session). The anchor probe also made rollouts with
+no file tools scorable at all. Live pi sessions against the same model
+at xhigh compacted mid-task, resumed on their own without re-running a
+command, and scored 5/5 first try once the quiz ran at low effort.
 
 | | codex (remote) | Claude Code | Letta | Hermes | pi / OpenClaw | **mempact** |
 |---|---|---|---|---|---|---|
@@ -172,8 +175,12 @@ Then hand compaction timing fully to mempact in
 { "compaction": { "enabled": false } }
 ```
 
-That's the whole install. `/mempact` shows the window chain, memory
-state, and last handoff score. Knobs are module constants at the top of
+That's the whole install. Running a local thinking model (llama.cpp,
+Qwen-class)? Declare it `"reasoning": true` in `models.json` so the
+checkride can ask the quiz-taker for low effort; at a server-side xhigh
+default with `reasoning: false` the quiz either deliberates past its
+budget (recorded as inconclusive, never as failure) or costs a retry.
+`/mempact` shows the window chain, memory state, and last handoff score. Knobs are module constants at the top of
 `pi/index.ts` (`CHECKRIDE_ENABLED`, `CLEAR_TOOL_OUTPUTS_AT_FRACTION`,
 ...) and peel back to the pure codex port. Degrades to silence, never
 breakage: no model, no auth, or any checkride error means plain codex
