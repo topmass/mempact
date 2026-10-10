@@ -1,55 +1,28 @@
 /**
- * Deterministic run-state facts, appended to every compaction summary next
- * to the file lists: the last significant command and its result, the
- * newest unresolved error, and the user's latest request. Summarizers drop
- * these often, and code can read them straight off the tool records.
+ * Deterministic command facts for the ledger: every shell-like tool run with
+ * its command, sniffed exit code, and the line that names the error.
+ * Summarizers drop these often, and code can read them straight off the
+ * tool records.
  */
 
 import { contentText } from "./items.ts";
 
-export interface RunFact {
+export interface CommandFact {
+  tool: string;
   command: string;
   /** sniffed exit code, if the output printed one */
   exit?: number;
-  isError: boolean;
-  /** first line of the output */
-  firstLine: string;
+  failed: boolean;
+  /** the line that names the error, only when the run failed */
+  error?: string;
+  /** index of the toolResult message in the input */
+  index: number;
 }
 
 const clipLine = (s: string, max = 200): string => {
   const first = (s.split("\n", 1)[0] ?? "").trim();
   return first.length <= max ? first : `${first.slice(0, max - 1)}…`;
 };
-
-const flatClip = (s: string, max = 300): string => {
-  const flat = s.replace(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-};
-
-export function runFactsBlock(facts: {
-  lastRun?: RunFact;
-  lastError?: string;
-  lastUserMessage?: string;
-}): string {
-  const lines: string[] = [];
-  if (facts.lastRun) {
-    const { command, exit, isError } = facts.lastRun;
-    const failed = isError || (exit != null && exit !== 0);
-    lines.push(
-      `<last-run>${command} -> ${failed ? `FAILED${exit != null ? ` (exit ${exit})` : ""}` : "succeeded"}</last-run>`,
-    );
-  }
-  if (facts.lastError) lines.push(`<unresolved-error>${facts.lastError}</unresolved-error>`);
-  // the retained history carries this verbatim but unlabeled, and resuming
-  // models fumble which message is the live request
-  if (facts.lastUserMessage && facts.lastUserMessage.trim())
-    lines.push(`<latest-user-request>${flatClip(facts.lastUserMessage)}</latest-user-request>`);
-  return lines.join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Fact extraction from host-neutral messages (pi shapes fit structurally)
-// ---------------------------------------------------------------------------
 
 interface MessageLike {
   role: string;
@@ -82,16 +55,17 @@ const RUN_TOOL = /bash|shell|exec|run|terminal|command/i;
 const SIGNIFICANT =
   /(?<![\w/.-])(?:test|vitest|jest|pytest|build|tsc|typecheck|lint|deploy|compile|check|install|migrate)(?![\w/.-])/i;
 
-/** Newest run-tool result (bash/shell/exec/terminal) with its command, plus
- *  the newest unresolved error (only if the last tool result failed). */
-export function extractRunFacts(messages: readonly MessageLike[]): {
-  lastRun?: RunFact;
-  lastError?: string;
-} {
+/**
+ * Run-tool results (bash/shell/exec/terminal) newest first, one per distinct
+ * command so a re-run replaces the earlier result: a failing `pnpm test`
+ * followed by a passing one reads as passing. Over the cap, failures and
+ * test/build commands win over housekeeping like `ls` or `git status`.
+ */
+export function collectCommands(messages: readonly MessageLike[], max = 20): CommandFact[] {
   const commandsById = new Map<string, string>();
   for (const m of messages) {
     if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
-    for (const block of m.content as { type: string; id?: string; name?: string; arguments?: Record<string, unknown> }[]) {
+    for (const block of m.content as { type: string; id?: string; arguments?: Record<string, unknown> }[]) {
       if (block.type !== "toolCall" || !block.id) continue;
       const raw = block.arguments?.command ?? block.arguments?.cmd; // codex uses "cmd"
       const command = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.join(" ") : undefined;
@@ -99,39 +73,22 @@ export function extractRunFacts(messages: readonly MessageLike[]): {
     }
   }
 
-  // Prefer the newest SIGNIFICANT command: the literal last command is often
-  // housekeeping no honest summary would mention.
-  let lastRun: RunFact | undefined;
-  let significantRun: RunFact | undefined;
-  let lastError: string | undefined;
+  const all: CommandFact[] = [];
+  const seen = new Set<string>();
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.role !== "toolResult") continue;
+    // only run output carries an exit status; a file read that contains
+    // "exit 1" is file content
+    if (m.role !== "toolResult" || !RUN_TOOL.test(m.toolName ?? "")) continue;
+    const command = m.toolCallId ? commandsById.get(m.toolCallId) : undefined;
+    if (!command || seen.has(command)) continue;
+    seen.add(command);
     const text = contentText(m.content);
-    const isRun = RUN_TOOL.test(m.toolName ?? "");
-    if (lastError === undefined) {
-      // only run output carries an exit status; a file read that contains
-      // "exit 1" is file content
-      const exit = isRun ? sniffExit(text) : undefined;
-      if (m.isError || (exit != null && exit !== 0)) lastError = errorLine(text);
-      // a successful read/grep/edit after a failed run does not resolve the
-      // failure - only the newest successful RUN clears it
-      else if (isRun) lastError = "";
-    }
-    if (!significantRun && isRun) {
-      const command = (m.toolCallId && commandsById.get(m.toolCallId)) || undefined;
-      if (command) {
-        const run: RunFact = {
-          command: clipLine(command, 160),
-          exit: sniffExit(text),
-          isError: m.isError ?? false,
-          firstLine: clipLine(text),
-        };
-        lastRun ??= run;
-        if (SIGNIFICANT.test(command)) significantRun = run;
-      }
-    }
-    if (significantRun && lastError !== undefined) break;
+    const exit = sniffExit(text);
+    const failed = m.isError === true || (exit != null && exit !== 0);
+    all.push({ tool: m.toolName!, command: clipLine(command, 160), exit, failed, error: failed ? errorLine(text) : undefined, index: i });
   }
-  return { lastRun: significantRun ?? lastRun, lastError: lastError || undefined };
+  const keep = new Set(all.filter((c) => c.failed || SIGNIFICANT.test(c.command)).slice(0, max));
+  for (const c of all) if (keep.size < max) keep.add(c);
+  return all.filter((c) => keep.has(c));
 }

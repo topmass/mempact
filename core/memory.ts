@@ -149,7 +149,7 @@ export function renderForContext(md: string): string {
     "<project_memory>",
     "Your durable working memory for this task. It SURVIVES context compaction -",
     "treat it as your own prior state, trust it, and keep it current via update_memory.",
-    "If the conversation above was compacted, this plus the recent turns is your ground truth.",
+    "If the conversation that follows was compacted, this plus the recent turns is your ground truth.",
     "",
     HEADER,
     "",
@@ -157,13 +157,4 @@ export function renderForContext(md: string): string {
     body,
     "</project_memory>",
   ].join("\n");
-}
-
-/** Paths listed in the Files section, for re-reading touched files after
- *  compaction the way codex does. Nothing calls this yet. */
-export function filesToRehydrate(md: string): string[] {
-  return getSection(md, "Files")
-    .split("\n")
-    .map((l) => l.replace(/^[-*]\s*/, "").split(/\s+[—-]\s+/)[0]!.trim())
-    .filter((p) => p.length > 0 && !p.startsWith("<!--"));
 }

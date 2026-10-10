@@ -1,6 +1,11 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collectFileOps, renderFileOps } from "../core/fileOps.ts";
-import { searchTexts } from "../core/recall.ts";
+import { artifactIdIn, searchTexts } from "../core/recall.ts";
+import { clearedStub } from "../core/toolClearing.ts";
+import extension from "../pi/index.ts";
 
 const call = (name: string, args: Record<string, unknown>) => ({
   role: "assistant",
@@ -73,5 +78,31 @@ describe("recall search", () => {
 
   it("empty or whitespace query matches nothing", () => {
     expect(searchTexts(items, "   ").total).toBe(0);
+  });
+});
+
+describe("artifacts for big tool outputs", () => {
+  it("saves the full output, names it in the truncation marker, and recall pages it by line range", async () => {
+    const handlers: Record<string, (...a: unknown[]) => unknown> = {};
+    const tools: Record<string, { execute: (...a: unknown[]) => Promise<{ content: { text: string }[] }> }> = {};
+    extension({
+      on: (name: string, fn: (...a: unknown[]) => unknown) => (handlers[name] = fn),
+      registerTool: (t: { name: string }) => (tools[t.name] = t as never),
+      registerCommand: () => {},
+    } as never);
+    const cwd = mkdtempSync(join(tmpdir(), "mempact-artifact-"));
+    const full = Array.from({ length: 3000 }, (_, i) => `line ${i + 1}`).join("\n");
+
+    const out = handlers.tool_result!({ content: [{ type: "text", text: full }] }, { cwd }) as { content: { text: string }[] };
+    const truncated = out.content[0]!.text;
+    const id = artifactIdIn(truncated)!;
+    expect(truncated).toContain(`[full output saved as artifact ${id}, ${full.length} bytes;`);
+    expect(readFileSync(join(cwd, ".mempact", "artifacts", `${id}.txt`), "utf8")).toBe(full);
+    expect(clearedStub(truncated)).toContain(`full output is artifact ${id}`);
+
+    const page = await tools.recall!.execute("t", { artifact: id, lines: "1500-1502" }, undefined, undefined, { cwd });
+    expect(page.content[0]!.text).toBe("lines 1500-1502 of 3000:\n1500| line 1500\n1501| line 1501\n1502| line 1502");
+    const bad = await tools.recall!.execute("t", { artifact: "../../etc/passwd" }, undefined, undefined, { cwd });
+    expect(bad.content[0]!.text).toContain("No artifact");
   });
 });

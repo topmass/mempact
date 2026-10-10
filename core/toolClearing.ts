@@ -14,20 +14,27 @@
  */
 
 import { contentText } from "./items.ts";
+import { artifactIdIn } from "./recall.ts";
 
 export const CLEARED_OUTPUT_NOTE =
   "[tool output cleared by mempact to free context (recall tool has the full text)";
+
+/** Anthropic's context editing keeps the last 3 tool uses by default. */
+export const KEEP_RECENT_TOOL_RESULTS = 3;
 
 export interface ClearableMessage {
   role: string;
   content?: unknown;
 }
 
-/** One-line stub keeping the original output's first line, clipped. */
+/** One-line stub keeping the original output's first line, clipped, plus
+ *  the artifact id when the output was too big to record whole. */
 export function clearedStub(originalText: string, maxChars = 160): string {
   const first = (originalText.split("\n", 1)[0] ?? "").trim();
   const clipped = first.length > maxChars ? `${first.slice(0, maxChars - 1)}…` : first;
-  return clipped ? `${CLEARED_OUTPUT_NOTE}; first line was: ${clipped}]` : `${CLEARED_OUTPUT_NOTE}]`;
+  const artifact = artifactIdIn(originalText);
+  const note = artifact ? `${CLEARED_OUTPUT_NOTE}; full output is artifact ${artifact}` : CLEARED_OUTPUT_NOTE;
+  return clipped ? `${note}; first line was: ${clipped}]` : `${note}]`;
 }
 
 /**

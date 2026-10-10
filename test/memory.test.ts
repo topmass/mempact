@@ -3,7 +3,6 @@ import {
   MEMORY_SECTIONS,
   appendToSection,
   emptyMemory,
-  filesToRehydrate,
   getSection,
   renderForContext,
   setSection,
@@ -72,12 +71,6 @@ describe("project memory", () => {
     expect(h1).toContain("# Notes\nkeep me\n# More\nme too");
     expect(getSection(h1, "Next")).toBe("x");
     expect(() => setSection(emptyMemory("g"), "Open", "a\n## Sneaky\nb")).toThrow();
-  });
-
-  it("extracts file paths to re-read on resume", () => {
-    let m = emptyMemory("g");
-    m = setSection(m, "Files", "src/auth.ts — token logic\n- src/db.ts - schema");
-    expect(filesToRehydrate(m)).toEqual(["src/auth.ts", "src/db.ts"]);
   });
 
   it("renders a trust-framed context block", () => {

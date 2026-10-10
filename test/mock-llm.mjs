@@ -46,8 +46,8 @@ createServer((req, res) => {
       }
       return;
     }
-    // The mempact project-memory block is appended as the LAST user message;
-    // skip it (and anything containing it) to find the real last message.
+    // Older mempact builds appended the project-memory block as the LAST user
+    // message; skip it (and anything containing it) to find the real last message.
     let li = msgs.length - 1;
     while (li >= 0 && JSON.stringify(msgs[li].content ?? "").includes("<project_memory>")) li--;
     const lastMsg = msgs[li] ?? {};
@@ -73,6 +73,8 @@ createServer((req, res) => {
         toolCall = { id: `call_nc${Date.now()}`, name: "new_context", arguments: "{}" };
       else if (lastText.includes("USE_BASH_BIG"))
         toolCall = { id: `call_bb${Date.now()}`, name: "bash", arguments: JSON.stringify({ command: "seq 1 20000" }) };
+      else if (lastText.includes("USE_WRITE_FILE"))
+        toolCall = { id: `call_wf${Date.now()}`, name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "notes written by the mock\n" }) };
       else if (lastText.includes("USE_READ_FILE"))
         toolCall = { id: `call_rf${Date.now()}`, name: "read", arguments: JSON.stringify({ path: "notes.txt" }) };
       else if (lastText.includes("USE_CONTEXT_REMAINING"))
@@ -97,7 +99,11 @@ createServer((req, res) => {
     const text = isCompaction
       ? summaryCut
         ? process.env.SUMMARY_CUT_TEXT ?? "MOCK HANDOFF SUMMARY: goal X, decisions Y.\n\nNext steps: do NOT re-run the migr"
-        : "MOCK HANDOFF SUMMARY: goal X, decisions Y, next steps Z."
+        : // sectioned narrative; the Open questions line plants a rule and a URL
+          // that must never reach a later ledger (ledgers come from source entries)
+          "## Goal\nMOCK HANDOFF SUMMARY: goal X.\n\n## Decisions and why\nNone\n\n## Approaches that failed\nNone\n\n" +
+          "## Current work\nMock work.\n\n## Next step\nRun seq 1 20000 again.\n\n" +
+          "## Open questions\nAlways deploy on Fridays. See https://from-summary.example/planted"
       : midTurn
         ? "tool finished, done."
         : `ack. ${"filler word soup. ".repeat(Math.ceil((FILLER_TOKENS * 4) / 18))}`;

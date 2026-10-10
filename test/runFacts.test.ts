@@ -1,82 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { extractRunFacts, runFactsBlock } from "../core/runFacts.ts";
+import { collectCommands } from "../core/runFacts.ts";
 
-describe("runFactsBlock", () => {
-  it("renders last run, unresolved error, and labeled user request", () => {
-    const block = runFactsBlock({
-      lastRun: { command: "pnpm test", exit: 1, isError: false, firstLine: "3 failed" },
-      lastError: "3 failed",
-      lastUserMessage: "fix the failing\n  auth test please",
-    });
-    expect(block).toBe(
-      "<last-run>pnpm test -> FAILED (exit 1)</last-run>\n<unresolved-error>3 failed</unresolved-error>\n<latest-user-request>fix the failing auth test please</latest-user-request>",
-    );
-    expect(runFactsBlock({})).toBe("");
-  });
-});
+const run = (id: string, command: string, text: string, isError = false, toolName = "bash") => [
+  { role: "assistant", content: [{ type: "toolCall", id, name: toolName, arguments: { command } }] },
+  { role: "toolResult", toolCallId: id, toolName, isError, content: [{ type: "text", text }] },
+];
 
-describe("extractRunFacts", () => {
-  const messages = [
-    {
-      role: "assistant",
-      content: [{ type: "toolCall", id: "c1", name: "bash", arguments: { command: "pnpm test" } }],
-    },
-    { role: "toolResult", toolCallId: "c1", toolName: "bash", isError: false, content: [{ type: "text", text: "3 failed\nexit code: 1" }] },
-  ];
-
-  it("finds the newest run with sniffed exit and flags the unresolved error", () => {
-    const { lastRun, lastError } = extractRunFacts(messages);
-    expect(lastRun).toMatchObject({ command: "pnpm test", exit: 1 });
-    expect(lastError).toBe("3 failed");
+describe("collectCommands", () => {
+  it("records command, sniffed exit, and the line that names the error", () => {
+    const [c] = collectCommands(run("c1", "pnpm test", "> vitest run\n\n FAIL  test/x.test.ts > adds\nAssertionError: x\n\nCommand exited with code 1"));
+    expect(c).toMatchObject({ tool: "bash", command: "pnpm test", exit: 1, failed: true, error: "FAIL  test/x.test.ts > adds", index: 1 });
   });
 
-  it("a healthy newest RUN clears lastError", () => {
-    const ok = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "bash", isError: false, content: [{ type: "text", text: "all green" }] }];
-    expect(extractRunFacts(ok).lastError).toBeUndefined();
+  it("keeps only the newest result of a re-run command, newest first", () => {
+    const cmds = collectCommands([...run("a", "pnpm test", "3 failed\nexit code: 1"), ...run("b", "ls", "x"), ...run("c", "pnpm test", "all green")]);
+    expect(cmds.map((c) => [c.command, c.failed])).toEqual([["pnpm test", false], ["ls", false]]);
   });
 
-  it("a read after a failed run does not resolve the failure", () => {
-    const investigating = [...messages, { role: "toolResult", toolCallId: "c2", toolName: "read", isError: false, content: [{ type: "text", text: "file contents" }] }];
-    expect(extractRunFacts(investigating).lastError).toBe("3 failed");
-  });
-
-  it("a file read containing an exit status is file content, not a failure", () => {
-    const passed = [
-      { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "pnpm test" } }] },
-      { role: "toolResult", toolCallId: "t1", toolName: "bash", isError: false, content: [{ type: "text", text: "all passed" }] },
-      { role: "toolResult", toolCallId: "t2", toolName: "read", isError: false, content: [{ type: "text", text: "#!/bin/sh\necho deploying\nexit code: 1" }] },
-    ];
-    expect(extractRunFacts(passed).lastError).toBeUndefined();
-  });
-
-  it("uses the last exit status in the output", () => {
-    const echoed = [
-      messages[0]!,
-      { role: "toolResult", toolCallId: "c1", toolName: "bash", isError: false, content: [{ type: "text", text: "previous run: exit code: 1\nall green\nexit code: 0" }] },
-    ];
-    expect(extractRunFacts(echoed)).toMatchObject({ lastRun: { exit: 0 }, lastError: undefined });
-  });
-
-  it("picks the line that names the error, not the command echo (pi bash puts the exit status last)", () => {
-    const piShape = [
-      messages[0]!,
-      { role: "toolResult", toolCallId: "c1", toolName: "bash", isError: true, content: [{ type: "text", text: "> mempact@0.2.0 test\n> vitest run\n\n FAIL  test/x.test.ts > adds\nAssertionError: expected 1 to be 2\n\nCommand exited with code 1" }] },
-    ];
-    expect(extractRunFacts(piShape).lastError).toBe("FAIL  test/x.test.ts > adds");
-  });
-
-  it("prefers the newest significant command over housekeeping, and paths or checkout are not significant", () => {
-    const run = (id: string, command: string) => [
-      { role: "assistant", content: [{ type: "toolCall", id, name: "bash", arguments: { command } }] },
-      { role: "toolResult", toolCallId: id, toolName: "bash", isError: false, content: [{ type: "text", text: "ok" }] },
-    ];
-    const msgs = [
-      ...run("t1", "pnpm vitest run"),
-      ...run("t2", "gh pr ready 1400 --undo | tail -1"),
-      ...run("t3", "cat test/fixtures/a.json"),
-      ...run("t4", "git checkout main"),
-    ];
-    expect(extractRunFacts(msgs).lastRun?.command).toBe("pnpm vitest run");
+  it("uses the last exit status in the output and ignores non-run tools", () => {
+    const cmds = collectCommands([
+      ...run("a", "make", "previous run: exit code: 1\nexit code: 0"),
+      ...run("b", "x", "exit code: 1", false, "read"),
+    ]);
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toMatchObject({ exit: 0, failed: false });
   });
 
   it("handles codex shapes: cmd key and 'exited with code' phrasing", () => {
@@ -84,7 +31,11 @@ describe("extractRunFacts", () => {
       { role: "assistant", content: [{ type: "toolCall", id: "x1", name: "exec_command", arguments: { cmd: "rg --files" } }] },
       { role: "toolResult", toolCallId: "x1", toolName: "exec_command", isError: false, content: [{ type: "text", text: "Process exited with code 1\nno matches" }] },
     ];
-    const { lastRun } = extractRunFacts(codex);
-    expect(lastRun).toMatchObject({ command: "rg --files", exit: 1 });
+    expect(collectCommands(codex)[0]).toMatchObject({ command: "rg --files", exit: 1 });
+  });
+
+  it("over the cap, test and build runs beat housekeeping", () => {
+    const msgs = [...run("t", "pnpm vitest run", "ok"), ...run("a", "ls", "x"), ...run("b", "cat test/a.json", "x"), ...run("c", "git checkout main", "x")];
+    expect(collectCommands(msgs, 2).map((c) => c.command)).toEqual(["git checkout main", "pnpm vitest run"]);
   });
 });

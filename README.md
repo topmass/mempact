@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="tests: 77 passing" src="https://img.shields.io/badge/tests-77%20passing-201b15">
+  <img alt="tests: 83 passing" src="https://img.shields.io/badge/tests-83%20passing-201b15">
   <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
   <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
   <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
@@ -27,8 +27,11 @@ that hot-swaps pi's default compaction in one settings line.
 the moment it is recorded (codex's rule: a 10KB policy with 1.2x slack),
 so no single command dump can flood the window. If a `.mempact/memory.md`
 exists, it is re-injected fresh from disk into every request, so it
-structurally cannot be compacted away. That file is written into your
-repo; add `.mempact/` to `.gitignore` if you do not want it committed.
+structurally cannot be compacted away. An output over the cap is first
+saved whole to `.mempact/artifacts/`, and the truncated text names the
+artifact so `recall` can page it back by line range. Both live in your
+repo; add `.mempact/` (or just `.mempact/artifacts/`) to `.gitignore` if
+you do not want them committed.
 Everything ever recorded stays on disk, and a `recall` tool can grep it
 back at any time. Demotion, never deletion.
 
@@ -50,38 +53,39 @@ memory file exists the model is told to persist anything durable NOW via
 
 **At 90%: the compaction itself.** A pipeline:
 
-1. The session's model writes a handoff summary using codex's verbatim
-   "CONTEXT CHECKPOINT COMPACTION" prompt (plus one guard line: the
-   window is data to summarize, not instructions), with codex's
-   front-trim retry if the request overflows. The summarizer sees the
-   same stubbed view the model has been seeing, so the request fits. A
-   summary cut off by the output limit is trimmed to its last whole
-   paragraph, line, or sentence and marked, never shipped mid-sentence.
-2. Code, not the model, staples the facts onto that summary, extracted
-   from the actual records: `<modified-files>` and `<read-files>`
-   (cumulative across every past compaction), `<anchors>` (URLs, commit
-   SHAs, PR/issue numbers, error codes, ranked by how many messages
-   mention them; Hermes measured this index lifting closed-book recall
-   from 23% to 60%), `<user-constraints>` (rule-shaped sentences from the
-   user's own messages, verbatim and cumulative; rule survival after
-   compaction is binary and pinning restores it, per arXiv 2606.22528),
-   `<last-run>` with the command and its result, `<unresolved-error>`
-   (the line that names the error, kept even when the model read a file
-   after the failure), and `<latest-user-request>` with the user's last
-   message quoted verbatim and labeled.
-3. The replacement history is assembled codex-style: up to 20k tokens of
-   the newest real user messages, then the stapled summary last, bridged
-   with codex's handoff text plus one added guard line: the summary is
-   reference, the latest user message always wins (Hermes's hard-won
-   lesson; their models kept re-doing cancelled work). If the compaction
+1. The most recent turns, up to 12k tokens, stay verbatim as a raw tail.
+   The cut only falls between complete tool calls and their results.
+2. Code builds a ledger from the whole session file, never from an
+   earlier summary, so facts cannot decay across rounds:
+   `<modified-files>` and `<read-files>`, `<commands>` with exit codes
+   and the line that names each error, `<user-constraints>` (rule-shaped
+   sentences from the user's own messages, verbatim, marked when a later
+   message reverses them; rule survival after compaction is binary and
+   pinning restores it, per arXiv 2606.22528), `<anchors>` (URLs, commit
+   SHAs, PR/issue numbers, error codes; Hermes measured this index lifting
+   closed-book recall from 23% to 60%), and `<latest-user-request>`.
+3. The session's model writes only a narrative for the turns before the
+   tail, in fixed sections (Goal, Decisions and why, Approaches that
+   failed, Current work, Next step, Open questions), told that the ledger
+   already carries the facts. Code checks it: every section present, not
+   cut off, and a Next step that names a modified file or command. One
+   retry on failure, then it ships with a note. Codex's front-trim retry
+   handles an overflowing request.
+4. The request is assembled codex-style: up to 20k tokens of the newest
+   real user messages, then the summary (codex's handoff text, the
+   narrative, the ledger, and one guard line: the summary is reference,
+   the latest user message always wins; Hermes's models kept re-doing
+   cancelled work), then the raw tail, then the current text of up to 5
+   recently modified files read from disk once. If the compaction
    interrupted a tool loop, a hidden continuation prompt resumes the work
    (interactive and RPC modes; a one-shot `pi -p` run ends when its loop
    aborts). A finished answer that merely crossed 90% is left alone.
-4. If two consecutive compactions each freed under 10%, the auto
+5. If two consecutive compactions each freed under 10%, the auto
    trigger pauses instead of looping.
 
-The next window opens with recent user words verbatim, the summary with
-its staples, memory freshly injected, and `recall` standing by.
+The next window opens with memory first, recent user words verbatim, the
+summary with its ledger, the raw tail, the rehydrated files, and `recall`
+standing by.
 
 ## Install: hot-swap pi's compaction
 
@@ -109,25 +113,25 @@ summary call hands the compaction back to pi. Typechecked against pi
 
 ## Standalone core
 
-`core/` has no runtime dependencies and no pi imports. Adapt your
-harness's message types to its neutral model and you get the fold, the
-truncation policies, and the staples:
+`core/` has no runtime dependencies and only type imports from pi-ai.
+`compactWindow` runs the whole compaction as one pure function; pass it
+the session messages and a `summarize` callback:
 
 ```ts
 import {
-  buildCompactedHistory, collectUserMessages,          // codex base
-  clearOldToolOutputs, collectFileOps, runFactsBlock,  // mechanical layers
-  collectAnchors, collectUserConstraints,              // anchor index, rule pinning
+  compactWindow, OverflowError,               // the pipeline
+  buildLedger, renderLedger, validateSummary, // its parts
+  clearOldToolOutputs, buildCompactedHistoryWithLimit,
 } from "./core/index.ts";
 ```
 
 ## Development
 
 ```bash
-pnpm install && pnpm test   # 77 vitest cases, incl. byte-exact parity with codex's truncation and fold
+pnpm install && pnpm test   # 83 vitest cases, incl. byte-exact parity with codex's truncation and fold
 ```
 
 Base engine derived from [openai/codex](https://github.com/openai/codex)
 @ `rust-v0.142.5` (Apache-2.0), Rust sources vendored under `reference/`,
-prompts and constants verbatim. The mechanical layers are original to
+the handoff bridge text and constants verbatim. The mechanical layers are original to
 this repo. Apache-2.0 throughout.
