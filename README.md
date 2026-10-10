@@ -125,6 +125,15 @@ import {
 } from "./core/index.ts";
 ```
 
+## Benchmark
+
+`pnpm bench` runs pi's compaction, codex's, and mempact's over the same
+synthetic sessions, compacting all three at the same points. It scores
+which planted facts survive each round, stale constraints, and cost. With
+`--replay`, it also checks whether the next action matches the one taken
+with full history. Results go to `bench/results/`. See
+[bench/README.md](bench/README.md) for what it measures and its limits.
+
 ## Development
 
 ```bash

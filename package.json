@@ -12,7 +12,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench": "node --experimental-strip-types --disable-warning=ExperimentalWarning bench/run.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": ">=0.78 <0.81",
