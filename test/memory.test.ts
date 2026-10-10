@@ -63,6 +63,17 @@ describe("project memory", () => {
     expect(getSection(m, "Next")).toBe("do the thing");
   });
 
+  it("keeps text before the first section, h1-only files, and rejects '## ' in a body", () => {
+    const md = emptyMemory("g").replace("\n\n## Goal", "\n\nUse pnpm, never npm.\n\n## Goal");
+    const withPreamble = setSection(md, "Next", "x");
+    expect(withPreamble).toContain("Use pnpm, never npm.");
+    expect(renderForContext(withPreamble)).toContain("Use pnpm, never npm.");
+    const h1 = setSection("# Notes\nkeep me\n# More\nme too\n", "Next", "x");
+    expect(h1).toContain("# Notes\nkeep me\n# More\nme too");
+    expect(getSection(h1, "Next")).toBe("x");
+    expect(() => setSection(emptyMemory("g"), "Open", "a\n## Sneaky\nb")).toThrow();
+  });
+
   it("extracts file paths to re-read on resume", () => {
     let m = emptyMemory("g");
     m = setSection(m, "Files", "src/auth.ts — token logic\n- src/db.ts - schema");

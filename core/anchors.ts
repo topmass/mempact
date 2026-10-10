@@ -12,6 +12,8 @@
  *   across compactions like the file lists.
  */
 
+import { contentText } from "./items.ts";
+
 export const MAX_ANCHORS = 12;
 export const MAX_CONSTRAINTS = 16;
 const CONSTRAINT_CLIP = 200;
@@ -21,22 +23,16 @@ interface MessageLike {
   content?: unknown;
 }
 
-const textOf = (content: unknown): string =>
-  Array.isArray(content)
-    ? (content as { type: string; text?: string }[])
-        .filter((c) => c.type === "text" && typeof c.text === "string")
-        .map((c) => c.text)
-        .join("\n")
-    : typeof content === "string"
-      ? content
-      : "";
-
 const ANCHOR_PATTERNS: RegExp[] = [
   /https?:\/\/[^\s)"'<>\]\\]+/g, // URLs (escaped tool output puts backslashes right after them)
   // git SHAs: hex with both digits and letters, not glued into a path or
-  // filename (pi's /tmp/pi-bash-<hex>.log pointers are not commits)
-  /(?<![-/\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g,
-  /(?:\bPR\s?#?|\bissue\s?#?|#)\d{2,6}\b/gi, // PR / issue refs
+  // filename (pi's /tmp/pi-bash-<hex>.log pointers are not commits), not a
+  // #rrggbbaa color, and not a word plus a number ("cafe123", "facade1")
+  /(?<![-/#\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])(?![a-f]+\d+\b|\d+[a-f]+\b)[0-9a-f]{7,40}\b/g,
+  // PR / issue refs. A bare "#" needs a line start, space, bracket, or
+  // owner/repo before it ("&#42;" is an HTML entity), and six bare digits
+  // read as a hex color (#123456) rather than a PR
+  /(?:\bPR\s?#?|\bissue\s?#?|(?<=^|[\s([]|[\w.-]\/[\w.-]+)#(?!\d{6}\b))\d{2,6}\b/gim,
   /\b[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}\b/g, // ERR_MODULE_NOT_FOUND, DWR_VIEW_ONLY (underscore = identifier, not shouting)
   // errno names by list: a length rule either misses EPIPE/EIO or admits EXISTS
   /\bE(?:NOENT|ACCES|PERM|PIPE|IO|BUSY|EXIST|INVAL|AGAIN|MFILE|NOSPC|ISDIR|NOTDIR|NOTEMPTY|CONNREFUSED|CONNRESET|TIMEDOUT|ADDRINUSE|HOSTUNREACH|NETUNREACH|LIFECYCLE)\b/g,
@@ -56,7 +52,7 @@ export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHO
     const weight = m.role === "user" || m.role === "assistant" ? 3 : 1;
     // UUIDs (session ids in harness wrappers) would otherwise shed hex
     // fragments that look like commit SHAs
-    const text = textOf(m.content).replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+    const text = contentText(m.content).replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
     if (!text.trim()) continue;
     const seen = new Set<string>();
     for (const re of ANCHOR_PATTERNS) {
@@ -74,9 +70,12 @@ export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHO
     .map(([token]) => token);
 }
 
-/** Rule-shaped phrasing. "only"/"always"/"make sure" mid-sentence were pure
- *  noise on casual transcripts (batch eval), so they count only sentence-first. */
-const RULE_WORDS = /\b(never|do not|don't|must not|must|avoid|should not|shouldn't|no longer|stop using)\b|^(always|only|make sure)\b/i;
+/** Rule-shaped phrasing, sentence-first only: mid-sentence rule words are
+ *  mostly narration ("I don't know why", "we must have broken it", a pasted
+ *  "TypeError: value must not be null"). An optional "please" or "you" may
+ *  lead; "don't worry/mind/bother" is reassurance, not a rule. */
+const RULE_WORDS =
+  /^(?:please\s+|you\s+)?(?:never|always|only|avoid|stop using|make sure|do not|don't(?!\s+(?:worry|mind|bother)\b)|must|should(?:n't| not| never| always))\b/i;
 /** Longer than this is a ramble, not a rule; questions are not rules either. */
 const RULE_MAX_CHARS = 240;
 

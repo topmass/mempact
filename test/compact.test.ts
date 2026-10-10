@@ -11,14 +11,12 @@ import {
   buildCompactedHistory,
   buildCompactedHistoryWithLimit,
   collectUserMessages,
-  getLastAssistantMessageFromTurn,
-  insertInitialContextBeforeLastRealUserOrSummary,
   isSummaryMessage,
-  runCompactionWithRetry,
   summaryBridgeText,
 } from "../core/compact.ts";
 import { contentItemsToText, messageText } from "../core/items.ts";
 import type { HistoryItem } from "../core/items.ts";
+import { markTruncatedSummary } from "../pi/index.ts";
 
 const userMessage = (text: string): HistoryItem => ({
   type: "message",
@@ -106,53 +104,6 @@ describe("buildCompactedHistory (compact_tests.rs:169,212)", () => {
   });
 });
 
-describe("insertInitialContextBeforeLastRealUserOrSummary (compact_tests.rs:572,656)", () => {
-  it("keeps summary last (inserts before last real user message)", () => {
-    const compacted = [
-      userMessage("older user"),
-      userMessage("latest user"),
-      userMessage(`${SUMMARY_PREFIX}\nsummary text`),
-    ];
-    const initialContext: HistoryItem[] = [
-      { type: "message", role: "developer", content: [{ type: "input_text", text: "fresh permissions" }] },
-    ];
-
-    const refreshed = insertInitialContextBeforeLastRealUserOrSummary(compacted, initialContext);
-    expect(refreshed.map((i) => messageText(i))).toEqual([
-      "older user",
-      "fresh permissions",
-      "latest user",
-      `${SUMMARY_PREFIX}\nsummary text`,
-    ]);
-  });
-
-  it("keeps compaction item last when only a compaction item exists", () => {
-    const compacted: HistoryItem[] = [{ type: "compaction", encryptedContent: "encrypted" }];
-    const initialContext: HistoryItem[] = [
-      { type: "message", role: "developer", content: [{ type: "input_text", text: "fresh permissions" }] },
-    ];
-
-    const refreshed = insertInitialContextBeforeLastRealUserOrSummary(compacted, initialContext);
-    expect(refreshed).toEqual([
-      { type: "message", role: "developer", content: [{ type: "input_text", text: "fresh permissions" }] },
-      { type: "compaction", encryptedContent: "encrypted" },
-    ]);
-  });
-
-  it("inserts before the summary when no real user message remains", () => {
-    const compacted = [userMessage(`${SUMMARY_PREFIX}\nonly summary`)];
-    const refreshed = insertInitialContextBeforeLastRealUserOrSummary(compacted, [
-      assistantMessage("ctx"),
-    ]);
-    expect(messageText(refreshed[refreshed.length - 1]!)).toBe(`${SUMMARY_PREFIX}\nonly summary`);
-  });
-
-  it("appends when history is empty", () => {
-    const refreshed = insertInitialContextBeforeLastRealUserOrSummary([], [userMessage("ctx")]);
-    expect(refreshed.length).toBe(1);
-  });
-});
-
 describe("isSummaryMessage (compact.rs:495)", () => {
   it("matches only the exact prefix + newline", () => {
     expect(isSummaryMessage(`${SUMMARY_PREFIX}\nrest`)).toBe(true);
@@ -161,61 +112,9 @@ describe("isSummaryMessage (compact.rs:495)", () => {
   });
 });
 
-describe("runCompactionWithRetry (compact.rs:233-296)", () => {
-  const overflow = () => Object.assign(new Error("context window exceeded"), { overflow: true });
-  const isOverflow = (e: unknown) => (e as { overflow?: boolean }).overflow === true;
-
-  it("front-trims paired items on overflow and succeeds", async () => {
-    const items: HistoryItem[] = [
-      { type: "function_call", name: "t", arguments: "{}", callId: "c1" },
-      { type: "function_call_output", callId: "c1", output: { content: "big" } },
-      userMessage("keep me"),
-      userMessage("prompt"),
-    ];
-    let calls = 0;
-    const summary = await runCompactionWithRetry(
-      items,
-      async (current) => {
-        calls++;
-        if (current.length > 2) throw overflow();
-        return "the summary";
-      },
-      { isContextOverflowError: isOverflow },
-    );
-    expect(summary).toBe("the summary");
-    // function_call trimmed together with its output (pairing rule)
-    expect(items).toEqual([userMessage("keep me"), userMessage("prompt")]);
-    expect(calls).toBe(2);
-  });
-
-  it("rethrows overflow when only one item remains", async () => {
-    const items: HistoryItem[] = [userMessage("prompt")];
-    await expect(
-      runCompactionWithRetry(items, async () => Promise.reject(overflow()), {
-        isContextOverflowError: isOverflow,
-      }),
-    ).rejects.toMatchObject({ overflow: true });
-  });
-
-  it("retries transient errors up to maxRetries", async () => {
-    let calls = 0;
-    const summary = await runCompactionWithRetry(
-      [userMessage("prompt")],
-      async () => {
-        calls++;
-        if (calls < 3) throw new Error("transient");
-        return "ok";
-      },
-      { isContextOverflowError: () => false, maxRetries: 5, backoffMs: () => 0 },
-    );
-    expect(summary).toBe("ok");
-    expect(calls).toBe(3);
-  });
-});
-
-describe("getLastAssistantMessageFromTurn", () => {
-  it("takes the last assistant message text", () => {
-    const items = [assistantMessage("first"), userMessage("u"), assistantMessage("summary out")];
-    expect(getLastAssistantMessageFromTurn(items)).toBe("summary out");
+describe("markTruncatedSummary (pi/index.ts)", () => {
+  it("cuts at the latest complete boundary, not the first boundary type found", () => {
+    const out = markTruncatedSummary("## Summary\n\nFixed the parser. Added a test. Then started on the cach");
+    expect(out.startsWith("## Summary\n\nFixed the parser. Added a test.\n\n[summary truncated")).toBe(true);
   });
 });

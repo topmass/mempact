@@ -45,6 +45,13 @@ export function emptyMemory(goal = ""): string {
   return `${HEADER}\n\n${body}`;
 }
 
+/** Text before the first `## ` heading, minus the generated header line.
+ *  Users put standing notes and h1 sections there; rebuild must keep them. */
+function parsePreamble(md: string): string {
+  const head = md.split(/^## /m)[0]!.trim();
+  return (head === HEADER || head.startsWith(`${HEADER}\n`) ? head.slice(HEADER.length) : head).trim();
+}
+
 /** Split a memory doc into [section -> raw body] (body excludes the header line). */
 function parseSections(md: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -71,7 +78,7 @@ export function getSection(md: string, name: MemorySection): string {
   return stripHint(parseSections(md).get(name) ?? "");
 }
 
-function rebuild(sections: Map<string, string>): string {
+function rebuild(sections: Map<string, string>, preamble: string): string {
   const known = new Set<string>(MEMORY_SECTIONS);
   const body = MEMORY_SECTIONS.map(
     // stripHint: the parsed body still carries the old hint line; without
@@ -82,15 +89,18 @@ function rebuild(sections: Map<string, string>): string {
     .filter(([name]) => !known.has(name))
     .map(([name, content]) => `## ${name}\n${content.trim()}\n`)
     .join("\n");
-  return extras ? `${HEADER}\n\n${body}\n${extras}` : `${HEADER}\n\n${body}`;
+  const head = preamble ? `${HEADER}\n\n${preamble}\n\n` : `${HEADER}\n\n`;
+  return extras ? `${head}${body}\n${extras}` : `${head}${body}`;
 }
 
 /** Replace a section's body wholesale. */
 export function setSection(md: string, name: MemorySection, body: string): string {
+  // a "## " line inside a body would split it into a new section on the next read
+  if (/^## /m.test(body)) throw new Error("memory section content cannot contain lines starting with '## '; use '###'");
   const sections = parseSections(md);
   // preserve unknown sections a user may have added, but re-emit known ones in order
   sections.set(name, body.trim());
-  return rebuild(sections);
+  return rebuild(sections, parsePreamble(md));
 }
 
 /** Append a line to a section (used for the append-only Decisions log, or
@@ -134,6 +144,7 @@ export function renderForContext(md: string): string {
       return [`## ${name}`, ...shown].join("\n");
     })
     .join("\n\n");
+  const preamble = parsePreamble(md);
   return [
     "<project_memory>",
     "Your durable working memory for this task. It SURVIVES context compaction -",
@@ -142,13 +153,14 @@ export function renderForContext(md: string): string {
     "",
     HEADER,
     "",
+    ...(preamble ? [preamble, ""] : []),
     body,
     "</project_memory>",
   ].join("\n");
 }
 
-/** Paths mentioned in the Files section — used to re-read touched files on
- *  resume (codex re-reads recently edited files after compaction). */
+/** Paths listed in the Files section, for re-reading touched files after
+ *  compaction the way codex does. Nothing calls this yet. */
 export function filesToRehydrate(md: string): string[] {
   return getSection(md, "Files")
     .split("\n")

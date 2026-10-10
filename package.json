@@ -2,7 +2,7 @@
   "name": "mempact",
   "version": "0.2.0",
   "private": true,
-  "description": "Verified context compaction for coding agents: codex's engine + mechanical fact carriage + the handoff checkride. Drop-in pi extension.",
+  "description": "Context compaction for coding agents: codex's engine plus mechanical fact carriage. Drop-in pi extension.",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": ["pi-package", "context-compaction", "context-engineering", "coding-agent"],
@@ -15,10 +15,10 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "@earendil-works/pi-agent-core": ">=0.78 <0.81",
+    "@earendil-works/pi-ai": ">=0.78 <0.81",
+    "@earendil-works/pi-coding-agent": ">=0.78 <0.81",
+    "typebox": "^1.0.0"
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "0.78.1",

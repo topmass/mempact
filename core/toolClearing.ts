@@ -13,17 +13,14 @@
  * friendly); only the boundary near the tail moves.
  */
 
+import { contentText } from "./items.ts";
+
 export const CLEARED_OUTPUT_NOTE =
   "[tool output cleared by mempact to free context (recall tool has the full text)";
 
 export interface ClearableMessage {
   role: string;
   content?: unknown;
-}
-
-interface TextBlockLike {
-  type: string;
-  text?: string;
 }
 
 /** One-line stub keeping the original output's first line, clipped. */
@@ -52,12 +49,7 @@ export function clearOldToolOutputs<M extends ClearableMessage>(
   const out = [...messages];
   for (const i of toolIndexes.slice(0, clearCount)) {
     const msg = out[i]!;
-    const blocks = Array.isArray(msg.content) ? (msg.content as TextBlockLike[]) : [];
-    const text = blocks
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => b.text)
-      .join("\n");
-    out[i] = { ...msg, content: [{ type: "text", text: clearedStub(text) }] } as M;
+    out[i] = { ...msg, content: [{ type: "text", text: clearedStub(contentText(msg.content)) }] } as M;
   }
   return { messages: out, cleared: clearCount };
 }

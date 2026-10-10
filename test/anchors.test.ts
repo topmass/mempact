@@ -50,6 +50,19 @@ describe("user constraints", () => {
     ]);
   });
 
+  it("ignores rule words that do not start the sentence, and reassurance", () => {
+    expect(
+      collectUserConstraints([
+        "I don't know why the build fails now. We must have broken something. Don't worry about the lint warnings.",
+        "TypeError: value must not be null",
+      ]),
+    ).toEqual([]);
+    expect(collectUserConstraints(["Please don't push to main. You must run tests first."])).toEqual([
+      "Please don't push to main.",
+      "You must run tests first.",
+    ]);
+  });
+
   it("merges cumulatively with dedup and keeps the newest on overflow", () => {
     const prev = ["Do not merge without approval."];
     const rules = collectUserConstraints(["Do not merge without approval. Always run tests first."], prev);
@@ -67,18 +80,20 @@ describe("user constraints", () => {
   });
 });
 
-describe("anchors probe grading", () => {
-  it("accepts a URL by its tail or a long numeric id, and weights conversation over tool output", async () => {
-    const { buildProbes, gradeQuiz } = await import("../core/checkride.ts");
-    const [probe] = buildProbes({
-      anchors: ["https://github.com/o/r/actions/runs/31544810988/job/93954969229", "https://github.com/o/r/pull/2065"],
-    });
-    expect(gradeQuiz([probe!], "run 31544810988 failed; see pull/2065").failed).toHaveLength(0);
-    expect(gradeQuiz([probe!], "nothing specific").failed).toHaveLength(1);
+describe("anchor ranking", () => {
+  it("weights conversation over tool output", () => {
     const ranked = collectAnchors([
       msg("toolResult", "https://ci.io/run/1\nhttps://ci.io/run/2"),
       msg("assistant", "the fix is in https://ci.io/run/2"),
     ]);
     expect(ranked[0]).toBe("https://ci.io/run/2");
+  });
+
+  it("skips hex colors, HTML entities, and word-plus-number hex", () => {
+    const anchors = collectAnchors([
+      msg("user", "set color: #123456; and #ff00aa80, star is &#42; and cafe123 facade1 ok"),
+    ]);
+    expect(anchors).toEqual([]);
+    expect(collectAnchors([msg("user", "fixed in topmass/mempact#87 and (#91)")])).toEqual(["#87", "#91"]);
   });
 });

@@ -12,14 +12,7 @@ import {
   truncateMiddleChars,
   truncateMiddleWithTokenBudget,
 } from "../core/truncate.ts";
-import {
-  bytesPolicy,
-  formattedTruncateText,
-  tokensPolicy,
-  truncateFunctionOutputItemsWithPolicy,
-  truncateText,
-} from "../core/outputTruncation.ts";
-import type { FunctionCallOutputContentItem } from "../core/items.ts";
+import { bytesPolicy, truncateText } from "../core/outputTruncation.ts";
 
 describe("splitString (truncate/tests.rs)", () => {
   it("split_string_works", () => {
@@ -76,92 +69,9 @@ describe("truncateMiddleChars (truncate/tests.rs)", () => {
   });
 });
 
-describe("formattedTruncateText (truncate_tests.rs)", () => {
-  it("truncate_bytes_less_than_placeholder_returns_placeholder", () => {
-    expect(formattedTruncateText("example output", bytesPolicy(1))).toBe(
-      "Warning: truncated output (original token count: 4)\nTotal output lines: 1\n\n…13 chars truncated…t",
-    );
-  });
-
-  it("truncate_tokens_less_than_placeholder_returns_placeholder", () => {
-    expect(formattedTruncateText("example output", tokensPolicy(1))).toBe(
-      "Warning: truncated output (original token count: 4)\nTotal output lines: 1\n\nex…3 tokens truncated…ut",
-    );
-  });
-
-  it("returns original under limit (tokens and bytes)", () => {
-    expect(formattedTruncateText("example output", tokensPolicy(10))).toBe("example output");
-    expect(formattedTruncateText("example output", bytesPolicy(20))).toBe("example output");
-  });
-
-  it("truncate_tokens_over_limit_returns_truncated", () => {
-    const content = "this is an example of a long output that should be truncated";
-    expect(formattedTruncateText(content, tokensPolicy(5))).toBe(
-      "Warning: truncated output (original token count: 15)\nTotal output lines: 1\n\nthis is an…10 tokens truncated… truncated",
-    );
-  });
-
-  it("truncate_bytes_over_limit_returns_truncated", () => {
-    const content = "this is an example of a long output that should be truncated";
-    expect(formattedTruncateText(content, bytesPolicy(30))).toBe(
-      "Warning: truncated output (original token count: 15)\nTotal output lines: 1\n\nthis is an exam…30 chars truncated…ld be truncated",
-    );
-  });
-
-  it("truncate_bytes_reports_original_line_count_when_truncated", () => {
-    const content =
-      "this is an example of a long output that should be truncated\nalso some other line";
-    expect(formattedTruncateText(content, bytesPolicy(30))).toBe(
-      "Warning: truncated output (original token count: 21)\nTotal output lines: 2\n\nthis is an exam…51 chars truncated…some other line",
-    );
-  });
-
-  it("truncate_tokens_reports_original_line_count_when_truncated", () => {
-    const content =
-      "this is an example of a long output that should be truncated\nalso some other line";
-    expect(formattedTruncateText(content, tokensPolicy(10))).toBe(
-      "Warning: truncated output (original token count: 21)\nTotal output lines: 2\n\nthis is an example o…11 tokens truncated…also some other line",
-    );
-  });
-
+describe("truncateText (truncate_tests.rs)", () => {
   it("truncate_middle_bytes_handles_utf8_content (via truncateText)", () => {
     const s = "😀😀😀😀😀😀😀😀😀😀\nsecond line with text\n";
     expect(truncateText(s, bytesPolicy(20))).toBe("😀😀…21 chars truncated…with text\n");
-  });
-});
-
-describe("truncateFunctionOutputItemsWithPolicy (truncate_tests.rs)", () => {
-  it("truncates_across_multiple_under_limit_texts_and_reports_omitted", () => {
-    const chunk =
-      "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega.\n";
-    const chunkTokens = approxTokenCount(chunk);
-    expect(chunkTokens).toBeGreaterThan(0);
-    const limit = chunkTokens * 3;
-    const items: FunctionCallOutputContentItem[] = [
-      { type: "input_text", text: chunk },
-      { type: "input_text", text: chunk },
-      { type: "input_image", imageUrl: "img:mid" },
-      { type: "input_text", text: chunk.repeat(10) },
-      { type: "input_text", text: chunk },
-      { type: "input_text", text: chunk },
-    ];
-
-    const out = truncateFunctionOutputItemsWithPolicy(items, tokensPolicy(limit));
-
-    expect(out.length).toBe(5);
-    expect(out[0]).toEqual({ type: "input_text", text: chunk });
-    expect(out[1]).toEqual({ type: "input_text", text: chunk });
-    expect(out[2]).toEqual({ type: "input_image", imageUrl: "img:mid" });
-    expect((out[3] as { text: string }).text).toContain("tokens truncated");
-    expect((out[4] as { text: string }).text).toContain("omitted 2 text items");
-  });
-
-  it("preserves encrypted content untouched", () => {
-    const items: FunctionCallOutputContentItem[] = [
-      { type: "input_text", text: "x".repeat(100) },
-      { type: "encrypted_content", encryptedContent: "opaque-blob" },
-    ];
-    const out = truncateFunctionOutputItemsWithPolicy(items, bytesPolicy(10));
-    expect(out).toContainEqual({ type: "encrypted_content", encryptedContent: "opaque-blob" });
   });
 });

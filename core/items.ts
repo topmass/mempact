@@ -64,3 +64,14 @@ export function contentItemsToText(content: ContentItem[]): string | null {
 export function messageText(item: HistoryItem): string | null {
   return item.type === "message" ? contentItemsToText(item.content) : null;
 }
+
+/** Joined non-empty text blocks of a pi-shaped message content (a string or
+ *  an array of `{ type: "text", text }` blocks next to images and tool calls). */
+export function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return (content as { type?: string; text?: unknown }[])
+    .filter((c) => c?.type === "text" && typeof c.text === "string" && c.text)
+    .map((c) => c.text as string)
+    .join("\n");
+}

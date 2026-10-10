@@ -11,26 +11,27 @@
  *   compaction summaries first; codex trains the model to see it last).
  * - turn_end: codex trigger - fires at min(configured, contextWindow*9/10),
  *   plus the one-shot token-budget reminder per window.
- * - tool_result: codex record-time cap - 10KB (x1.2 slack) middle-ellipsis
- *   truncation of tool output text before it is persisted.
+ * - tool_result: codex record-time cap - outputs over 12,000 bytes (10KB
+ *   policy x1.2 slack) are middle-truncated to 12,000 before they persist.
  * - new_context tool: codex's model-invokable hard reset (no summary).
  *
- * Install (~/.pi/agent/settings.json):
- *   "extensions": ["/home/topmass/Code/mempact/pi/index.ts"],
- *   "compaction": { "enabled": false }   // disables only pi's built-in trigger
+ * Install: `pi install git:github.com/topmass/mempact`, then set
+ * "compaction": { "enabled": false } in ~/.pi/agent/settings.json. That also
+ * turns off pi's own overflow recovery, so mempact's turn_end handler is the
+ * only recovery left.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { complete } from "@earendil-works/pi-ai";
-import type { Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import { complete, isContextOverflow } from "@earendil-works/pi-ai";
+import type { Message, UserMessage } from "@earendil-works/pi-ai";
 import type {
   CompactionEntry,
   ExtensionAPI,
   ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, estimateTokens } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
@@ -41,8 +42,8 @@ import {
   summaryBridgeText,
 } from "../core/compact.ts";
 import type { HistoryItem } from "../core/items.ts";
-import { messageText } from "../core/items.ts";
-import { AutoCompactWindow, type AutoCompactWindowIds } from "../core/autoCompactWindow.ts";
+import { contentText, messageText } from "../core/items.ts";
+import { AutoCompactWindow } from "../core/autoCompactWindow.ts";
 import {
   autoCompactTokenLimit,
   autoCompactTokenStatus,
@@ -52,19 +53,10 @@ import {
   MEMORY_SECTIONS,
   appendToSection,
   emptyMemory,
-  getSection,
   renderForContext,
   setSection,
 } from "../core/memory.ts";
-import {
-  buildProbes,
-  extractRunFacts,
-  formatQuiz,
-  gradeQuiz,
-  handoffFactsBlock,
-  mustPreserveSection,
-  runFactsBlock,
-} from "../core/checkride.ts";
+import { extractRunFacts, runFactsBlock } from "../core/runFacts.ts";
 import { clearOldToolOutputs } from "../core/toolClearing.ts";
 import { type FileOpLists, collectFileOps, renderFileOps } from "../core/fileOps.ts";
 import {
@@ -111,9 +103,10 @@ const CONTINUE_PROMPT =
  * window at the default 90% limit), tool outputs older than the newest
  * KEEP_RECENT_TOOL_RESULTS are stubbed per-request. Non-destructive - the
  * session file keeps the originals. null disables the tier.
- * Latched per window: pi reports usage from the last (already stubbed)
- * request, so a plain threshold would flip on/off every other turn and
- * thrash the prompt cache; once on, it stays on until compaction.
+ * The tier is decided from a token estimate of the UNSTUBBED messages, not
+ * from pi's reported usage: usage comes from the last request, which was
+ * already stubbed, so a usage threshold flips on and off every other turn
+ * and thrashes the prompt cache.
  */
 const CLEAR_TOOL_OUTPUTS_AT_FRACTION: number | null = 0.7;
 const KEEP_RECENT_TOOL_RESULTS = 3;
@@ -123,24 +116,6 @@ const KEEP_RECENT_TOOL_RESULTS = 3;
  * overflow recovery stay live) instead of looping.
  */
 const THRASH_MIN_SAVINGS_FRACTION = 0.1;
-/**
- * Handoff checkride: quiz the assembled post-compaction context against
- * deterministic facts; fail -> one MUST-PRESERVE regeneration; fail again ->
- * splice the facts in mechanically. Never blocks compaction. See
- * core/checkride.ts for the full standard.
- */
-const CHECKRIDE_ENABLED = true;
-/**
- * The quiz is pure recall, so it runs at low reasoning effort (pi-ai maps
- * it per provider; "minimal" is rejected by llama.cpp). Thinking models spend
- * the output budget deliberating first: at xhigh a 700-token cap returned an
- * EMPTY answer every time (2026-09-03), which would have failed every probe
- * and fired the full-window retry on every compaction. Low effort measured
- * ~1.3k thinking + answer; 6k leaves room. An empty answer is treated as
- * inconclusive, never as failure.
- */
-const CHECKRIDE_MAX_TOKENS = 6000;
-
 /**
  * Stale-intent guard (Hermes lineage - their top recurring failure was the
  * model resuming cancelled work from the summary): appended AFTER the
@@ -170,16 +145,36 @@ const SUMMARIZER_GUARD =
  * never blocks compaction, so it keeps the complete paragraphs, says so, and
  * relies on the mechanical fact blocks appended after it.
  */
-const markTruncatedSummary = (text: string): string => {
-  // boundary ladder: paragraph, then line, then sentence; nothing complete -> drop
-  const cuts = [text.lastIndexOf("\n\n"), text.lastIndexOf("\n"), text.lastIndexOf(". ") + 1];
-  const kept = text.slice(0, cuts.find((c) => c > 0) ?? 0).trimEnd();
+export const markTruncatedSummary = (text: string): string => {
+  // cut at the latest complete paragraph, line, or sentence; taking the first
+  // boundary type that exists could keep only a heading
+  const cut = Math.max(text.lastIndexOf("\n\n"), text.lastIndexOf("\n"), text.lastIndexOf(". ") + 1, 0);
+  const kept = text.slice(0, cut).trimEnd();
   const note = "[summary truncated by the model's output limit - the fact blocks below are complete]";
   return kept ? `${kept}\n\n${note}` : note;
 };
 
+/**
+ * Output cap for the summary call, pi's formula (compaction.ts
+ * generateSummary: 0.8 of the reserve, at most model.maxTokens) with the
+ * reserve the 90% trigger leaves free. Asking for model.maxTokens on a
+ * 90%-full window makes Anthropic reject input + max_tokens as over the limit.
+ */
+const summaryMaxTokens = (model: { contextWindow: number; maxTokens: number }): number => {
+  const reserve = model.contextWindow - (autoCompactTokenLimit(model.contextWindow, CONFIGURED_TOKEN_LIMIT) ?? 0);
+  return Math.min(Math.floor(0.8 * reserve), model.maxTokens > 0 ? model.maxTokens : Infinity);
+};
+
+/** Whether the clearing tier applies to these unstubbed messages (see the constant). */
+const clearingDue = (messages: AgentMessage[], contextWindow: number | undefined): boolean => {
+  if (CLEAR_TOOL_OUTPUTS_AT_FRACTION == null) return false;
+  const limit = autoCompactTokenLimit(contextWindow ?? null, CONFIGURED_TOKEN_LIMIT);
+  if (limit == null) return false;
+  const estimate = messages.reduce((n, m) => n + estimateTokens(m), 0);
+  return estimate >= limit * CLEAR_TOOL_OUTPUTS_AT_FRACTION;
+};
+
 const REMINDER_CUSTOM_TYPE = "mempact:token-budget-reminder";
-const WINDOW0_CUSTOM_TYPE = "mempact:window0";
 /** Sentinel that matches no session entry -> pi keeps zero entries. */
 const FIRST_KEPT_SENTINEL = "mempact:none";
 
@@ -192,23 +187,13 @@ interface MempactDetails {
     version: 1;
     /** codex replacement history: retained real user messages, oldest-first. */
     retainedUserMessages: string[];
-    window: { windowNumber: number } & AutoCompactWindowIds;
+    window: { windowNumber: number };
     newContext?: boolean;
     /** cumulative deterministic file-op lists (pi lineage), capped in core. */
     readFiles?: string[];
     modifiedFiles?: string[];
     /** cumulative verbatim user rules (core/anchors.ts), capped in core */
     userConstraints?: string[];
-    /** handoff checkride outcome for this compaction */
-    checkride?: {
-      asked: number;
-      passed: number;
-      failed: string[];
-      retried: boolean;
-      spliced: boolean;
-      /** the quiz-taker returned no answer text (e.g. thinking ate the budget) */
-      inconclusive?: boolean;
-    };
   };
 }
 
@@ -230,14 +215,6 @@ const userMsg = (text: string, timestamp: number): UserMessage => ({
   timestamp,
 });
 
-const textOf = (content: string | readonly { type: string; text?: string }[]): string =>
-  typeof content === "string"
-    ? content
-    : content
-        .filter((c): c is TextContent => c.type === "text" && !!(c as TextContent).text)
-        .map((c) => c.text)
-        .join("\n");
-
 /**
  * Project memory (Letta/MemGPT memory-block lineage): a plain markdown file
  * the model maintains via the update_memory tool. Injected fresh from disk
@@ -253,23 +230,12 @@ const readMemoryFile = (cwd: string): string | null => {
   }
 };
 
-/** Heuristic overflow classifier (pi does not export its internal one). */
-export const isContextOverflowError = (error: unknown): boolean => {
-  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return (
-    /context.{0,20}(window|length|limit)|too (long|large|many tokens)|maximum (context|.{0,20}tokens)|prompt is too long|exceeds? the (context|token)/.test(
-      msg,
-    )
-  );
-};
-
 export default function (pi: ExtensionAPI) {
   const window = new AutoCompactWindow();
   let compacting = false;
   let newContextRequested = false;
   let warnedAboutBuiltinTrigger = false;
   let lastClearedCount = 0;
-  let clearingLatched = false;
   // Anti-thrashing: savings fraction of the last two compactions, measured
   // when post-compaction usage first becomes known.
   const recentSavings: number[] = [];
@@ -277,31 +243,13 @@ export default function (pi: ExtensionAPI) {
   let thrashNotified = false;
 
   // -------------------------------------------------------------------------
-  // session_start: restore window chain + reminder one-shot from the JSONL
+  // session_start: restore window number + reminder one-shot from the JSONL
   // -------------------------------------------------------------------------
   pi.on("session_start", (_event, ctx) => {
-    // The latch is per-process; on resume it re-engages after one full turn.
-    clearingLatched = false;
     const entries = ctx.sessionManager.getBranch();
     const lastCompaction = latestCompactionEntry(entries);
     const mempact = lastCompaction ? getMempactDetails(lastCompaction) : null;
-    if (mempact) {
-      window.restore(mempact.window.windowNumber, {
-        firstWindowId: mempact.window.firstWindowId,
-        previousWindowId: mempact.window.previousWindowId,
-        windowId: mempact.window.windowId,
-      });
-    } else {
-      const window0 = entries.find(
-        (e) => e.type === "custom" && e.customType === WINDOW0_CUSTOM_TYPE,
-      );
-      if (window0 && window0.type === "custom") {
-        const data = window0.data as AutoCompactWindowIds | undefined;
-        if (data?.windowId) window.restore(0, { ...data, previousWindowId: null });
-      } else {
-        pi.appendEntry(WINDOW0_CUSTOM_TYPE, window.currentIds());
-      }
-    }
+    if (mempact) window.restore(mempact.window.windowNumber);
 
     // Reminder already delivered in the current window? (survives restarts)
     const lastCompactionIdx = lastCompaction ? entries.indexOf(lastCompaction) : -1;
@@ -328,7 +276,7 @@ export default function (pi: ExtensionAPI) {
     // new_context tool path: hard reset, no summary, no LLM call
     // (codex core/src/session/mod.rs:3395 maybe_start_new_context_window).
     if (window.takeNewContextWindowRequest()) {
-      const [windowNumber, ids] = window.advance();
+      const windowNumber = window.advance();
       return {
         compaction: {
           summary: "Context window cleared via new_context.",
@@ -338,7 +286,7 @@ export default function (pi: ExtensionAPI) {
             mempact: {
               version: 1,
               retainedUserMessages: [],
-              window: { windowNumber, ...ids },
+              window: { windowNumber },
               newContext: true,
             },
           } satisfies MempactDetails,
@@ -364,6 +312,7 @@ export default function (pi: ExtensionAPI) {
     const effective: AgentMessage[] = [];
     const realUserTexts: string[] = [];
     const lastCompaction = latestCompactionEntry(branchEntries);
+    let start = lastCompaction ? branchEntries.indexOf(lastCompaction) + 1 : 0;
     if (lastCompaction) {
       const prev = getMempactDetails(lastCompaction);
       const ts = Date.parse(lastCompaction.timestamp) || Date.now();
@@ -373,29 +322,32 @@ export default function (pi: ExtensionAPI) {
           realUserTexts.push(text);
         }
         if (!prev.newContext) effective.push(userMsg(bridgeWithGuard(lastCompaction.summary), ts));
-      } else if (lastCompaction.summary) {
-        effective.push(userMsg(bridgeWithGuard(lastCompaction.summary), ts));
+      } else {
+        if (lastCompaction.summary) effective.push(userMsg(bridgeWithGuard(lastCompaction.summary), ts));
+        // a foreign (pi) compaction keeps the entries from firstKeptEntryId
+        // up to itself; they are still in the model's context
+        const keptIdx = branchEntries.findIndex((e) => e.id === lastCompaction.firstKeptEntryId);
+        if (keptIdx !== -1 && keptIdx < start) start = keptIdx;
       }
     }
-    const start = lastCompaction ? branchEntries.indexOf(lastCompaction) + 1 : 0;
     for (const entry of branchEntries.slice(start)) {
       if (entry.type === "message") {
         effective.push(entry.message);
-        if (entry.message.role === "user") realUserTexts.push(textOf(entry.message.content));
+        if (entry.message.role === "user") realUserTexts.push(contentText(entry.message.content));
       } else if (entry.type === "custom_message") {
-        effective.push(userMsg(textOf(entry.content), Date.parse(entry.timestamp) || Date.now()));
+        effective.push(userMsg(contentText(entry.content), Date.parse(entry.timestamp) || Date.now()));
       }
     }
 
     // codex compact.rs:84,212: append the summarization prompt as a user
     // message on top of real history; custom instructions override it.
-    // Once the clearing tier has latched, the summarizer sees the same stubbed
+    // When the clearing tier applies, the summarizer sees the same stubbed
     // view the model has been seeing: the measured 90% is of THAT view, so the
     // raw history can be far over the window and would send the front-trim
     // loop below through dozens of rejected calls. Facts below are still
     // extracted from the full `effective`.
     const promptText = `${event.customInstructions?.trim() || SUMMARIZATION_PROMPT}\n\n${SUMMARIZER_GUARD}`;
-    const sentView = clearingLatched
+    const sentView = clearingDue(effective, ctx.model.contextWindow)
       ? clearOldToolOutputs(effective, KEEP_RECENT_TOOL_RESULTS).messages
       : effective;
     const history: Message[] = convertToLlm(sentView);
@@ -421,14 +373,16 @@ export default function (pi: ExtensionAPI) {
             {
               apiKey: auth.apiKey,
               headers: auth.headers,
-              maxTokens: ctx.model.maxTokens,
+              maxTokens: summaryMaxTokens(ctx.model),
               signal,
             },
           );
-          summary = response.content
-            .filter((c): c is TextContent => c.type === "text")
-            .map((c) => c.text)
-            .join("\n");
+          summary = contentText(response.content);
+          if (isContextOverflow(response, ctx.model.contextWindow) && history.length > 1) {
+            dropOldest(history);
+            retries = 0;
+            continue;
+          }
           if (response.stopReason === "error") {
             throw new Error(response.errorMessage ?? "summarization request failed");
           }
@@ -436,11 +390,6 @@ export default function (pi: ExtensionAPI) {
           break;
         } catch (error) {
           if (signal.aborted) return undefined;
-          if (isContextOverflowError(error) && history.length > 1) {
-            dropOldest(history);
-            retries = 0;
-            continue;
-          }
           if (retries < maxRetries) {
             retries += 1;
             await new Promise((r) => setTimeout(r, Math.min(200 * 2 ** retries, 5_000)));
@@ -504,104 +453,7 @@ export default function (pi: ExtensionAPI) {
       .map((item) => messageText(item) ?? "")
       .filter((t) => t.length > 0);
 
-    // Handoff checkride: quiz the ACTUAL post-compaction context against
-    // deterministic facts. Wrapped so the safety layer can never break the
-    // compaction it protects.
-    let checkride: NonNullable<MempactDetails["mempact"]["checkride"]> | undefined;
-    if (CHECKRIDE_ENABLED) {
-      try {
-        const memoryMd = readMemoryFile(ctx.cwd);
-        const probes = buildProbes({
-          modifiedFiles: fileOps.modifiedFiles,
-          lastRun: runFacts.lastRun,
-          lastError: runFacts.lastError,
-          lastUserMessage: realUserTexts[realUserTexts.length - 1],
-          anchors,
-          userConstraints,
-          memoryNext: memoryMd ? getSection(memoryMd, "Next") : undefined,
-          memoryDoneItems: memoryMd
-            ? getSection(memoryMd, "Plan").split("\n").filter((l) => /\[x\]/i.test(l))
-            : undefined,
-          memoryDecisions: memoryMd
-            ? getSection(memoryMd, "Decisions").split("\n").filter((l) => l.trim())
-            : undefined,
-        });
-        if (probes.length > 0) {
-          const quiz = async (candidateSummary: string) => {
-            const quizMessages: Message[] = [
-              ...retainedUserMessages.map((t) => userMsg(t, Date.now())),
-              userMsg(bridgeWithGuard(candidateSummary), Date.now()),
-              ...(memoryMd ? [userMsg(renderForContext(memoryMd), Date.now())] : []),
-              userMsg(formatQuiz(probes), Date.now()),
-            ];
-            const response = await complete(
-              ctx.model!,
-              {
-                systemPrompt: "You answer verification questions strictly from the provided record.",
-                messages: quizMessages,
-              },
-              { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: CHECKRIDE_MAX_TOKENS, reasoning: "low", signal },
-            );
-            const answer = response.content
-              .filter((c): c is TextContent => c.type === "text")
-              .map((c) => c.text)
-              .join("\n");
-            return { ...gradeQuiz(probes, answer), answered: answer.trim().length > 0 };
-          };
-
-          let result = await quiz(summary);
-          let retried = false;
-          let spliced = false;
-          if (!result.answered) {
-            // no answer at all says nothing about the handoff; do not spend a
-            // second full-window call on it
-            checkride = { asked: probes.length, passed: 0, failed: [], retried, spliced, inconclusive: true };
-          } else if (result.failed.length > 0) {
-            retried = true;
-            try {
-              const retryPrompt = `${promptText}\n\n${mustPreserveSection(result.failed)}`;
-              const response = await complete(
-                ctx.model!,
-                { systemPrompt, messages: [...history, userMsg(retryPrompt, Date.now())] },
-                { apiKey: auth.apiKey!, headers: auth.headers, maxTokens: ctx.model!.maxTokens, signal },
-              );
-              let retriedSummary = response.content
-                .filter((c): c is TextContent => c.type === "text")
-                .map((c) => c.text)
-                .join("\n");
-              if (response.stopReason === "length") retriedSummary = markTruncatedSummary(retriedSummary);
-              if (retriedSummary.trim()) {
-                const candidate = spliceBlock ? `${retriedSummary}\n\n${spliceBlock}` : retriedSummary;
-                const second = await quiz(candidate);
-                if (second.failed.length < result.failed.length) {
-                  summary = candidate;
-                  result = second;
-                }
-              }
-            } catch {
-              // retry is best-effort; the original summary stands
-            }
-            if (result.failed.length > 0) {
-              // Mechanical splice: the facts get through without any model
-              // cooperation. Compaction ships regardless.
-              spliced = true;
-              summary = `${summary}\n\n${handoffFactsBlock(result.failed)}`;
-            }
-          }
-          checkride ??= {
-            asked: probes.length,
-            passed: probes.length - result.failed.length,
-            failed: result.failed.map((p) => p.id),
-            retried,
-            spliced,
-          };
-        }
-      } catch {
-        // never block compaction on verification machinery
-      }
-    }
-
-    const [windowNumber, ids] = window.advance();
+    const windowNumber = window.advance();
     return {
       compaction: {
         summary,
@@ -611,11 +463,10 @@ export default function (pi: ExtensionAPI) {
           mempact: {
             version: 1,
             retainedUserMessages,
-            window: { windowNumber, ...ids },
+            window: { windowNumber },
             readFiles: fileOps.readFiles,
             modifiedFiles: fileOps.modifiedFiles,
             userConstraints,
-            checkride,
           },
         } satisfies MempactDetails,
       },
@@ -625,22 +476,12 @@ export default function (pi: ExtensionAPI) {
   // -------------------------------------------------------------------------
   // session_compact: bookkeeping after ANY compaction (ours or foreign)
   // -------------------------------------------------------------------------
-  // A branch jump or a model with a different window changes what "63%"
-  // means; drop the latch and let the next request re-evaluate it.
-  pi.on("session_tree", () => {
-    clearingLatched = false;
-  });
-  pi.on("model_select", () => {
-    clearingLatched = false;
-  });
-
   pi.on("session_compact", (event) => {
     compacting = false;
-    clearingLatched = false;
     pendingTokensBefore = event.compactionEntry.tokensBefore ?? null;
     thrashNotified = false;
     // Foreign compaction (pi fallback or another extension): still advance
-    // the window chain so numbering matches codex semantics.
+    // the window number so numbering matches codex semantics.
     if (!getMempactDetails(event.compactionEntry)) window.advance();
   });
 
@@ -671,22 +512,14 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // 2) clearing tier: stub old tool outputs once past the threshold. The
-    // latch keeps it on for the rest of the window (see the constant), and
-    // stubs are byte-stable across requests.
-    if (CLEAR_TOOL_OUTPUTS_AT_FRACTION != null) {
-      if (!clearingLatched) {
-        const usage = ctx.getContextUsage();
-        const limit = usage ? autoCompactTokenLimit(usage.contextWindow, CONFIGURED_TOKEN_LIMIT) : null;
-        if (usage?.tokens != null && limit != null && usage.tokens >= limit * CLEAR_TOOL_OUTPUTS_AT_FRACTION)
-          clearingLatched = true;
-      }
-      if (clearingLatched) {
-        const result = clearOldToolOutputs(messages, KEEP_RECENT_TOOL_RESULTS);
-        if (result.cleared > 0) {
-          messages = result.messages;
-          lastClearedCount = result.cleared;
-        }
+    // 2) clearing tier: stub old tool outputs once the unstubbed messages
+    // pass the threshold (see the constant). Stubs are byte-stable across
+    // requests.
+    if (clearingDue(messages, ctx.model?.contextWindow)) {
+      const result = clearOldToolOutputs(messages, KEEP_RECENT_TOOL_RESULTS);
+      if (result.cleared > 0) {
+        messages = result.messages;
+        lastClearedCount = result.cleared;
       }
     }
 
@@ -745,13 +578,14 @@ export default function (pi: ExtensionAPI) {
     if (newContextRequested) {
       newContextRequested = false;
       window.requestNewContextWindow();
-      triggerCompaction(midTask);
+      // never auto-continue: the turn's own new_context result would count as
+      // mid-task, and the continue prompt points at a summary the reset deleted
+      triggerCompaction(false);
       return;
     }
 
     // Replaces pi's built-in overflow recovery (disabled via settings).
-    const message = event.message as { stopReason?: string; errorMessage?: string };
-    if (message.stopReason === "error" && isContextOverflowError(message.errorMessage ?? "")) {
+    if (event.message.role === "assistant" && isContextOverflow(event.message, ctx.model?.contextWindow)) {
       triggerCompaction(true);
       return;
     }
@@ -770,7 +604,6 @@ export default function (pi: ExtensionAPI) {
       activeContextTokens: usage.tokens,
       contextWindow: usage.contextWindow,
       configuredLimit: CONFIGURED_TOKEN_LIMIT,
-      scope: "total",
     });
     if (status.tokenLimitReached) {
       // Anti-thrashing: two consecutive near-no-op compactions -> pause the
@@ -814,17 +647,16 @@ export default function (pi: ExtensionAPI) {
 
   // -------------------------------------------------------------------------
   // tool_result: codex record-time ingestion cap (10KB x1.2, middle-ellipsis)
-  // history.rs:362 process_item / truncate_function_output_payload
+  // history.rs:362 process_item truncates to policy*1.2, not to the policy
   // -------------------------------------------------------------------------
   pi.on("tool_result", (event) => {
-    const policy = mulPolicy(DEFAULT_TRUNCATION_POLICY, SERIALIZATION_BUDGET_MULTIPLIER);
-    const capBytes = byteBudget(policy);
+    const capBytes = byteBudget(mulPolicy(DEFAULT_TRUNCATION_POLICY, SERIALIZATION_BUDGET_MULTIPLIER));
     const encoder = new TextEncoder();
     let changed = false;
     const content = event.content.map((c) => {
       if (c.type !== "text" || encoder.encode(c.text).length <= capBytes) return c;
       changed = true;
-      return { ...c, text: truncateMiddleChars(c.text, byteBudget(DEFAULT_TRUNCATION_POLICY)) };
+      return { ...c, text: truncateMiddleChars(c.text, capBytes) };
     });
     return changed ? { content } : undefined;
   });
@@ -868,7 +700,6 @@ export default function (pi: ExtensionAPI) {
         activeContextTokens: usage.tokens,
         contextWindow: usage.contextWindow,
         configuredLimit: CONFIGURED_TOKEN_LIMIT,
-        scope: "total",
       });
       const remaining = tokensUntilCompaction(status);
       const text = `${remaining} tokens remain before automatic compaction (${usage.tokens} of ${status.autoCompactScopeLimit} used, window ${usage.contextWindow}).`;
@@ -933,12 +764,10 @@ export default function (pi: ExtensionAPI) {
       const items: SearchableText[] = [];
       entries.forEach((entry, i) => {
         if (entry.type === "message") {
-          const content = (entry.message as { content?: string | { type: string; text?: string }[] })
-            .content;
-          const text = content ? textOf(content as never) : "";
+          const text = contentText((entry.message as { content?: unknown }).content);
           if (text) items.push({ label: `[entry ${i} ${entry.message.role}]`, text });
         } else if (entry.type === "custom_message") {
-          const text = textOf(entry.content as never);
+          const text = contentText(entry.content);
           if (text) items.push({ label: `[entry ${i} note]`, text });
         } else if (entry.type === "compaction") {
           items.push({ label: `[entry ${i} compaction-summary]`, text: entry.summary });
@@ -959,21 +788,15 @@ export default function (pi: ExtensionAPI) {
   // /mempact status command (verification/debugging aid)
   // -------------------------------------------------------------------------
   pi.registerCommand("mempact", {
-    description: "Show mempact window chain and compaction trigger status",
+    description: "Show mempact window number and compaction trigger status",
     handler: async (_args, ctx) => {
       const usage = ctx.getContextUsage();
-      const ids = window.currentIds();
-      const lines = [
-        `window #${window.windowNumber()} (${ids.windowId})`,
-        `first: ${ids.firstWindowId}`,
-        `previous: ${ids.previousWindowId ?? "none"}`,
-      ];
+      const lines = [`window #${window.windowNumber()}`];
       if (usage) {
         const status = autoCompactTokenStatus({
           activeContextTokens: usage.tokens ?? 0,
           contextWindow: usage.contextWindow,
           configuredLimit: CONFIGURED_TOKEN_LIMIT,
-          scope: "total",
         });
         lines.push(
           `tokens: ${usage.tokens ?? "unknown"} / limit ${status.autoCompactScopeLimit} (window ${usage.contextWindow})`,
@@ -985,14 +808,6 @@ export default function (pi: ExtensionAPI) {
       if (lastClearedCount > 0) lines.push(`tool outputs cleared last request: ${lastClearedCount}`);
       if (recentSavings.length === 2 && recentSavings.every((s) => s < THRASH_MIN_SAVINGS_FRACTION))
         lines.push("auto-compaction paused (thrashing: last two compactions freed <10%)");
-      const lastEntry = latestCompactionEntry(ctx.sessionManager.getBranch());
-      const cr = lastEntry ? getMempactDetails(lastEntry)?.checkride : undefined;
-      if (cr)
-        lines.push(
-          cr.inconclusive
-            ? `last handoff checkride: inconclusive (${cr.asked} asked, quiz-taker returned no answer)`
-            : `last handoff checkride: ${cr.passed}/${cr.asked} passed${cr.retried ? ", retried" : ""}${cr.spliced ? `, spliced facts: ${cr.failed.join("/")}` : ""}`,
-        );
       ctx.ui.notify(lines.join("\n"), "info");
     },
   });
