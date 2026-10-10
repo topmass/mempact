@@ -41,6 +41,30 @@ export function buildCompactedHistoryWithLimit(
   summaryText: string,
   maxTokens: number,
 ): HistoryItem[] {
+  for (const message of selectUserMessages(userMessages, maxTokens)) {
+    history.push({
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: message.message }],
+    });
+  }
+
+  const summary = summaryText.length === 0 ? "(no summary available)" : summaryText;
+
+  history.push({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: summary }],
+  });
+
+  return history;
+}
+
+/** The selection half of build_compacted_history_with_limit, oldest first. */
+export function selectUserMessages(
+  userMessages: readonly CompactedUserMessage[],
+  maxTokens: number,
+): CompactedUserMessage[] {
   const selectedMessages: CompactedUserMessage[] = [];
   if (maxTokens > 0) {
     let remaining = maxTokens;
@@ -59,22 +83,5 @@ export function buildCompactedHistoryWithLimit(
     }
     selectedMessages.reverse();
   }
-
-  for (const message of selectedMessages) {
-    history.push({
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text: message.message }],
-    });
-  }
-
-  const summary = summaryText.length === 0 ? "(no summary available)" : summaryText;
-
-  history.push({
-    type: "message",
-    role: "user",
-    content: [{ type: "input_text", text: summary }],
-  });
-
-  return history;
+  return selectedMessages;
 }

@@ -53,6 +53,27 @@ describe("buildLedger", () => {
     expect(pivot.constraints[0]!.superseded).toBe(false);
     expect(pivot.goalChanges).toEqual([{ text: "Scratch that, new plan: just prototype.", index: 1 }]);
   });
+
+  it("does not take a question or a complaint for a reversal", () => {
+    for (const [rule, later] of [
+      ["Never delete the prod database.", "Did you delete the prod database?"],
+      ["Never push to main.", "Wait, did you push to main?"],
+      ["Always run tests before committing.", "Why didn't you run tests before committing?"],
+      ["Always run the tests.", "Run the tests, no need to ask."],
+    ]) {
+      expect(buildLedger([user(rule!), user(later!)]).constraints[0]).toMatchObject({ text: rule, superseded: false });
+    }
+  });
+
+  it("keeps a user `!cmd` run and a branch summary out of the user's words", () => {
+    const ledger = buildLedger([
+      user("Never use npm."),
+      user("The following is a summary of a branch that this conversation came back from:\n\n<summary>\nAlways use yarn.\n</summary>"),
+      user("Ran `npm ls`\n```\nYou can use npm now.\n```"),
+    ]);
+    expect(ledger.constraints).toEqual([{ text: "Never use npm.", index: 0, superseded: false }]);
+    expect(ledger.latestUserRequest).toBe("Never use npm.");
+  });
 });
 
 describe("renderLedger", () => {

@@ -11,8 +11,7 @@ export interface FileOpLists {
   modifiedFiles: string[];
 }
 
-/** Cap per list so cumulative merging across many compactions stays bounded
- *  (oldest paths drop first; a re-touched path moves back to the end). */
+/** Cap per list (oldest paths drop first; a re-touched path moves back to the end). */
 const MAX_TRACKED_PATHS = 40;
 
 const pathOf = (args: Record<string, unknown>): string | undefined =>
@@ -28,17 +27,10 @@ const pushUnique = (list: string[], p: string): void => {
   list.push(p);
 };
 
-/**
- * Extract read/modified file paths from assistant toolCall blocks, merged
- * cumulatively with the previous compaction's lists (previous first, so
- * recency ordering holds after the cap).
- */
-export function collectFileOps<M extends { role: string; content?: unknown }>(
-  messages: readonly M[],
-  previous?: FileOpLists,
-): FileOpLists {
-  const readFiles = [...(previous?.readFiles ?? [])];
-  const modifiedFiles = [...(previous?.modifiedFiles ?? [])];
+/** Extract read/modified file paths from assistant toolCall blocks. */
+export function collectFileOps<M extends { role: string; content?: unknown }>(messages: readonly M[]): FileOpLists {
+  const readFiles: string[] = [];
+  const modifiedFiles: string[] = [];
   for (const m of messages) {
     if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
     for (const block of m.content as { type: string; name?: string; arguments?: Record<string, unknown> }[]) {

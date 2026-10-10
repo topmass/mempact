@@ -30,11 +30,9 @@ describe("deterministic file-op tracking", () => {
     expect(ops.readFiles).toEqual(["README.md"]);
   });
 
-  it("merges cumulatively with previous lists, re-touched path moves to end", () => {
-    const prev = { readFiles: ["old.ts", "a.ts"], modifiedFiles: ["m.ts"] };
-    const ops = collectFileOps([call("read", { path: "a.ts" })], prev);
+  it("moves a re-touched path to the end", () => {
+    const ops = collectFileOps([call("read", { path: "a.ts" }), call("read", { path: "old.ts" }), call("read", { path: "a.ts" })]);
     expect(ops.readFiles).toEqual(["old.ts", "a.ts"]);
-    expect(ops.modifiedFiles).toEqual(["m.ts"]);
   });
 
   it("caps each list, dropping oldest", () => {

@@ -63,9 +63,8 @@ describe("user constraints", () => {
     ]);
   });
 
-  it("merges cumulatively with dedup and keeps the newest on overflow", () => {
-    const prev = ["Do not merge without approval."];
-    const rules = collectUserConstraints(["Do not merge without approval. Always run tests first."], prev);
+  it("dedups and keeps the newest on overflow", () => {
+    const rules = collectUserConstraints(["Do not merge without approval.", "Do not merge without approval. Always run tests first."]);
     expect(rules).toEqual(["Do not merge without approval.", "Always run tests first."]);
     const many = Array.from({ length: 20 }, (_, i) => `Never touch file${i}.`);
     expect(collectUserConstraints(many)).toHaveLength(16);
@@ -95,5 +94,7 @@ describe("anchor ranking", () => {
     ]);
     expect(anchors).toEqual([]);
     expect(collectAnchors([msg("user", "fixed in topmass/mempact#87 and (#91)")])).toEqual(["#87", "#91"]);
+    expect(collectAnchors([msg("user", "shas deadbeef1 abcd123 1234567abc")])).toEqual(["deadbeef1", "abcd123", "1234567abc"]);
+    expect(collectAnchors([msg("toolResult", "use recall with artifact=0a1b2c3d4e5f")])).toEqual([]);
   });
 });

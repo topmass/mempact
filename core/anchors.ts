@@ -27,8 +27,11 @@ const ANCHOR_PATTERNS: RegExp[] = [
   /https?:\/\/[^\s)"'<>\]\\]+/g, // URLs (escaped tool output puts backslashes right after them)
   // git SHAs: hex with both digits and letters, not glued into a path or
   // filename (pi's /tmp/pi-bash-<hex>.log pointers are not commits), not a
-  // #rrggbbaa color, and not a word plus a number ("cafe123", "facade1")
-  /(?<![-/#\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])(?![a-f]+\d+\b|\d+[a-f]+\b)[0-9a-f]{7,40}\b/g,
+  // #rrggbbaa color, and not a word of 4+ letters plus a number ("cafe123",
+  // "facade1"). A word here has no two different consonants side by side, so
+  // "abcd123" and "deadbeef1" still count as SHAs.
+  // ponytail: pronounceable-letters heuristic; a word list if it misfires
+  /(?<![-/#\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])(?!(?:[ae]|([bcdf])\1?(?![bcdf])){4,}\d+\b)[0-9a-f]{7,40}\b/g,
   // PR / issue refs. A bare "#" needs a line start, space, bracket, or
   // owner/repo before it ("&#42;" is an HTML entity), and six bare digits
   // read as a hex color (#123456) rather than a PR
@@ -50,9 +53,11 @@ export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHO
   const df = new Map<string, number>();
   for (const m of messages) {
     const weight = m.role === "user" || m.role === "assistant" ? 3 : 1;
-    // UUIDs (session ids in harness wrappers) would otherwise shed hex
-    // fragments that look like commit SHAs
-    const text = contentText(m.content).replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+    // UUIDs (session ids in harness wrappers) and artifact ids would
+    // otherwise shed hex that looks like commit SHAs
+    const text = contentText(m.content)
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ")
+      .replace(/artifact[= ][0-9a-f]{12}\b/g, " ");
     if (!text.trim()) continue;
     const seen = new Set<string>();
     for (const re of ANCHOR_PATTERNS) {
@@ -74,22 +79,17 @@ export function collectAnchors(messages: readonly MessageLike[], max = MAX_ANCHO
  *  mostly narration ("I don't know why", "we must have broken it", a pasted
  *  "TypeError: value must not be null"). An optional "please" or "you" may
  *  lead; "don't worry/mind/bother" is reassurance, not a rule. */
-const RULE_WORDS =
+export const RULE_WORDS =
   /^(?:please\s+|you\s+)?(?:never|always|only|avoid|stop using|make sure|do not|don't(?!\s+(?:worry|mind|bother)\b)|must|should(?:n't| not| never| always))\b/i;
 /** Longer than this is a ramble, not a rule; questions are not rules either. */
 const RULE_MAX_CHARS = 240;
 
 /**
- * Sentences from REAL user messages that read like standing rules. Merged
- * cumulatively with the previous compaction's list (previous first, dedup,
+ * Sentences from REAL user messages that read like standing rules (dedup,
  * newest kept on overflow).
  */
-export function collectUserConstraints(
-  userTexts: readonly string[],
-  previous: readonly string[] = [],
-  max = MAX_CONSTRAINTS,
-): string[] {
-  const out = [...previous];
+export function collectUserConstraints(userTexts: readonly string[], max = MAX_CONSTRAINTS): string[] {
+  const out: string[] = [];
   for (const text of userTexts) {
     // unwrap hard-wrapped prose: a line with no terminal punctuation continues
     // on the next line unless that line starts a bullet, heading, or paragraph

@@ -40,11 +40,17 @@ const sniffExit = (text: string): number | undefined => {
   return m ? Number(m[1]) : undefined;
 };
 
-/** The most informative line of a failing output: the first line that names
- *  an error, else the first line. pi's bash appends "Command exited with code
- *  N" AFTER the body, so the first line alone is usually just a command echo. */
+/** The most informative line of a failing output: the first typed error
+ *  ("AssertionError: ...", "error[E0433]:", "panicked", "TS2345"), else the
+ *  first line that names an error, else the first line. A test runner's
+ *  "FAIL test/x > case" header comes before the line that says why. pi's bash
+ *  appends "Command exited with code N" AFTER the body, so the first line
+ *  alone is usually just a command echo. */
 const errorLine = (text: string): string => {
-  const hit = text.split("\n").find((l) => /\b(err|error|fail(ed|ure)?|exception|panic|traceback|fatal)\b/i.test(l));
+  const lines = text.split("\n");
+  const hit =
+    lines.find((l) => /\w*(?:Error|Exception)\b:|\berror(?:\[\w+\])?:|\bpanicked\b|\bTS\d{4}\b/.test(l)) ??
+    lines.find((l) => /\b(err|error|fail(ed|ure)?|exception|panic|traceback|fatal)\b/i.test(l));
   return clipLine(hit ?? text);
 };
 

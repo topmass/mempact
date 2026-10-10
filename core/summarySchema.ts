@@ -57,15 +57,27 @@ export const markTruncatedSummary = (text: string): string => {
   return kept ? `${kept}\n\n${TRUNCATED_NOTE}` : TRUNCATED_NOTE;
 };
 
-/** Heading (lowercased, without "#", "*" or ":") -> trimmed body. */
+export const TRUNCATED_FAILURE = "cut off by the output limit; write it shorter";
+
+/** A line that names a section: "## Goal", "**Goal**", "## 1. Goal", "Goal:",
+ *  "## Goal: text", "**Goal:** text". Group 2 is text on the heading line. */
+const HEADING = /^\s*(?:#{1,6}\s*)?(?:\d+[.)]\s*)?(?:\*\*)?\s*(?:\d+[.)]\s*)?([a-z][a-z ]*[a-z])\s*(?:\*\*)?\s*(?::\s*(?:\*\*)?\s*(.*?))?\s*$/i;
+const SECTION_NAMES = new Set(NARRATIVE_SECTIONS.map((s) => s.toLowerCase()));
+
+/** Known section name (lowercased) -> trimmed body. Other lines, including
+ *  unknown headings, belong to the section above them. */
 const parseSections = (text: string): Map<string, string> => {
-  const out = new Map<string, string>();
-  for (const part of text.split(/^#{1,6}[ \t]+/m).slice(1)) {
-    const nl = part.indexOf("\n");
-    const name = (nl === -1 ? part : part.slice(0, nl)).replace(/[*:]/g, "").trim().toLowerCase();
-    out.set(name, nl === -1 ? "" : part.slice(nl + 1).trim());
+  const out = new Map<string, string[]>();
+  let body: string[] | undefined;
+  for (const line of text.split("\n")) {
+    const m = HEADING.exec(line);
+    const name = m?.[1]!.replace(/\s+/g, " ").toLowerCase();
+    if (name && SECTION_NAMES.has(name)) {
+      body = m![2] ? [m![2]] : [];
+      out.set(name, body);
+    } else body?.push(line);
   }
-  return out;
+  return new Map([...out].map(([name, lines]) => [name, lines.join("\n").trim()]));
 };
 
 /**
@@ -81,10 +93,11 @@ export function validateSummary(text: string, ledger: Ledger): string[] {
     if (body === undefined) failures.push(`missing section "${name}"`);
     else if (!body) failures.push(`empty section "${name}"`);
   }
-  if (text.includes(TRUNCATED_NOTE)) failures.push("cut off by the output limit; write it shorter");
+  if (text.includes(TRUNCATED_NOTE)) failures.push(TRUNCATED_FAILURE);
 
+  // "None", "Task complete", "Ask the user ..." are honest next steps that name no file
   const next = sections.get("next step");
-  if (next && (ledger.modifiedFiles.length > 0 || ledger.commands.length > 0)) {
+  if (next && !/^none\b|\buser\b|\bcomplete\b|\bdone\b/i.test(next) && (ledger.modifiedFiles.length > 0 || ledger.commands.length > 0)) {
     const named =
       ledger.modifiedFiles.some((p) => next.includes(p) || next.includes(p.split("/").pop()!)) ||
       ledger.commands.some((c) => next.includes(c.command) || next.includes(c.command.split(/\s+/).slice(0, 2).join(" ")));

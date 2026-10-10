@@ -24,6 +24,24 @@ describe("validateSummary", () => {
     expect(validateSummary(narrative("Continue the task."), buildLedger([]))).toEqual([]);
   });
 
+  it("accepts a next step that hands back to the user", () => {
+    expect(validateSummary(narrative("Task complete. Wait for the user's next request."), edited)).toEqual([]);
+    expect(validateSummary(narrative("None"), edited)).toEqual([]);
+  });
+
+  it("accepts bold, numbered, and colon headings", () => {
+    const formats: [string, (s: string) => string][] = [
+      ["## Goal", (s) => `## ${s}\nNone`],
+      ["**Goal**", (s) => `**${s}**\nNone`],
+      ["## 1. Goal", (s) => `## 1. ${s}\nNone`],
+      ["Goal:", (s) => `${s.toUpperCase()}:\nNone`],
+      ["## Goal: text", (s) => `## ${s}: None`],
+    ];
+    for (const [, heading] of formats) {
+      expect(validateSummary(NARRATIVE_SECTIONS.map(heading).join("\n\n"), buildLedger([]))).toEqual([]);
+    }
+  });
+
   it("catches a summary cut off by the output limit", () => {
     const cut = markTruncatedSummary(`${narrative("Edit token.ts")}\nand then do NOT re-run the migr`);
     expect(validateSummary(cut, edited)).toEqual(["cut off by the output limit; write it shorter"]);

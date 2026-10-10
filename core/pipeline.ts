@@ -7,20 +7,19 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
-import {
-  COMPACT_USER_MESSAGE_MAX_TOKENS,
-  buildCompactedHistoryWithLimit,
-  isSummaryMessage,
-  summaryBridgeText,
-} from "./compact.ts";
-import { contentText, messageText } from "./items.ts";
-import { type Ledger, buildLedger, renderLedger } from "./ledger.ts";
-import { narrativePrompt, validateSummary } from "./summarySchema.ts";
+import { COMPACT_USER_MESSAGE_MAX_TOKENS, isSummaryMessage, selectUserMessages, summaryBridgeText } from "./compact.ts";
+import { contentText } from "./items.ts";
+import { BRANCH_SUMMARY_PREFIX, type Ledger, buildLedger, renderLedger } from "./ledger.ts";
+import { TRUNCATED_FAILURE, narrativePrompt, validateSummary } from "./summarySchema.ts";
 import { KEEP_RECENT_TOOL_RESULTS, clearOldToolOutputs } from "./toolClearing.ts";
 import { autoCompactTokenLimit } from "./trigger.ts";
+import { truncateMiddleChars } from "./truncate.ts";
 
 export const RAW_TAIL_TOKENS = 12_000;
 const MAX_REHYDRATE_FILES = 5;
+/** pi's cut for tool output in its summarizer input; the ledger already
+ *  carries files, commands and error lines verbatim */
+const SUMMARY_TOOL_RESULT_CHARS = 2_000;
 
 /**
  * Stale-intent guard (Hermes lineage: their top recurring failure was the
@@ -34,7 +33,7 @@ export const STALE_INTENT_NOTE =
   "described above.";
 
 /** deps.summarize throws this when the request does not fit the window; the
- *  pipeline then drops the oldest drained message and asks again. */
+ *  pipeline then drops the oldest tenth of the drained messages and asks again. */
 export class OverflowError extends Error {}
 
 export interface CompactWindowInput {
@@ -45,7 +44,9 @@ export interface CompactWindowInput {
   previous?: { narrative: string; start: number };
   contextWindow: number;
   maxOutputTokens: number;
-  /** the agent's own system prompt, reused so the summary call shares its cache prefix */
+  /** the agent's own system prompt, sent with the summary call. The call
+   *  sends no tools, so on Anthropic it does not share the agent's cache
+   *  prefix (tools come before the system prompt in cache order). */
   systemPrompt?: string;
   /** extra user instructions, e.g. from `/compact <text>` */
   instructions?: string;
@@ -101,9 +102,9 @@ const summaryMaxTokens = (contextWindow: number, maxOutputTokens: number): numbe
   return Math.min(Math.floor(0.8 * reserve), maxOutputTokens > 0 ? maxOutputTokens : Infinity);
 };
 
-/** Drop the oldest message plus the toolResults it would orphan. */
-const dropOldest = (msgs: Message[]): Message[] => {
-  let i = 1;
+/** Drop the oldest `count` messages plus the toolResults they would orphan. */
+const dropOldest = (msgs: Message[], count: number): Message[] => {
+  let i = Math.max(1, count);
   while (i < msgs.length && msgs[i]!.role === "toolResult") i++;
   return msgs.slice(i);
 };
@@ -119,55 +120,67 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
   const ledger = buildLedger(messages);
   const ledgerBlock = renderLedger(ledger);
 
-  // codex's rule: the newest real user messages under 20k tokens. Taken from
-  // everything before the tail (the tail already carries its own), which
-  // matches codex, whose replacement history re-collects them every round.
+  // codex's rule: the newest real user messages under 20k tokens, or a tenth
+  // of a small window so they cannot refill it. Taken from everything before
+  // the tail (the tail already carries its own), which matches codex, whose
+  // replacement history re-collects them every round. Summaries and a user
+  // `!cmd` run (pi renders it "Ran `cmd`") are not the user's words.
   const userTexts = messages
     .slice(0, tailStart)
     .filter((m) => m.role === "user")
     .map((m) => contentText(m.content))
-    .filter((t) => t && !isSummaryMessage(t));
-  const retainedUserMessages = buildCompactedHistoryWithLimit(
-    [],
+    .filter((t) => t && !isSummaryMessage(t) && !t.startsWith(BRANCH_SUMMARY_PREFIX) && !t.startsWith("Ran `"));
+  const retainedUserMessages = selectUserMessages(
     userTexts.map((message) => ({ message })),
-    "",
-    COMPACT_USER_MESSAGE_MAX_TOKENS,
-  )
-    .slice(0, -1)
-    .map((item) => messageText(item) ?? "")
-    .filter(Boolean);
+    Math.min(COMPACT_USER_MESSAGE_MAX_TOKENS, Math.floor(input.contextWindow / 10)),
+  ).map((m) => m.message);
 
   // The summarizer sees the previous narrative, never a previous summary
-  // with a ledger inside it, then the drained region.
+  // with a ledger inside it, then the drained region with each tool output
+  // cut to pi's 2,000 characters (the retained messages and tail stay whole).
   const maxTokens = summaryMaxTokens(input.contextWindow, input.maxOutputTokens);
   const prior = previous?.narrative.trim()
     ? [userMessage(`Prior narrative from earlier context windows. Keep what still holds and update it with the conversation that follows:\n\n${previous.narrative.trim()}`)]
     : [];
-  let history = messages.slice(start, tailStart).filter((m) => !(m.role === "user" && isSummaryMessage(contentText(m.content))));
+  let history = messages
+    .slice(start, tailStart)
+    .filter((m) => !(m.role === "user" && isSummaryMessage(contentText(m.content))))
+    .map((m): Message =>
+      m.role === "toolResult"
+        ? { ...m, content: m.content.map((c) => (c.type === "text" ? { ...c, text: truncateMiddleChars(c.text, SUMMARY_TOOL_RESULT_CHARS) } : c)) }
+        : m,
+    );
+  // nothing drained (the tail holds the whole window): there is nothing new
+  // to narrate, and a model asked to summarize nothing invents something
+  const drainedNothing = history.length === 0;
   // The 90% trigger measured the stubbed view the model was seeing; the raw
-  // drained region can be far larger, so the summarizer gets the same view.
+  // drained region can be far larger, so the summarizer gets the same view,
+  // then loses its oldest messages until the request fits.
   const prompt = narrativePrompt(ledgerBlock, input.instructions);
-  const size = [...prior, ...history, userMessage(prompt)].reduce((n, m) => n + deps.estimateTokens(m), 0);
-  if (size > input.contextWindow - maxTokens) history = clearOldToolOutputs(history, KEEP_RECENT_TOOL_RESULTS).messages;
+  const sum = (msgs: Message[]) => msgs.reduce((n, m) => n + deps.estimateTokens(m), 0);
+  const room = input.contextWindow - maxTokens - sum([userMessage(input.systemPrompt ?? ""), ...prior, userMessage(prompt)]);
+  if (sum(history) > room) {
+    history = clearOldToolOutputs(history, KEEP_RECENT_TOOL_RESULTS).messages;
+    history = history.slice(tailStartIndex(history, 0, room, deps.estimateTokens));
+  }
 
   const ask = async (text: string): Promise<string> => {
     for (;;) {
       try {
         return (await deps.summarize(input.systemPrompt ?? "", [...prior, ...history, userMessage(text)], maxTokens)).trim();
       } catch (error) {
-        // codex compact.rs front-trim: on overflow drop the oldest and retry
+        // codex compact.rs front-trim, a tenth at a time instead of one
+        // message per call
         if (!(error instanceof OverflowError) || history.length === 0) throw error;
-        history = dropOldest(history);
+        history = dropOldest(history, Math.ceil(history.length / 10));
       }
     }
   };
 
-  // nothing drained (the tail holds the whole window): there is nothing new
-  // to narrate, and a model asked to summarize nothing invents something
-  const drainedNothing = history.length === 0;
   let narrative = drainedNothing ? (previous?.narrative.trim() ?? "") : await ask(prompt);
   let failures = drainedNothing ? [] : validateSummary(narrative, ledger);
-  const retried = failures.length > 0;
+  // a retry cannot fix an empty reply or a cut alone: it gets the same output cap
+  const retried = narrative !== "" && failures.some((f) => f !== TRUNCATED_FAILURE);
   if (retried) {
     narrative = await ask(
       `${prompt}\n\nYour previous checkpoint had these problems. Write the whole checkpoint again without them:\n${failures.map((f) => `- ${f}`).join("\n")}`,

@@ -6,7 +6,7 @@
  * facts keep all of them).
  */
 
-import { MAX_CONSTRAINTS, collectAnchors, collectUserConstraints, renderAnchors, renderUserConstraints } from "./anchors.ts";
+import { MAX_CONSTRAINTS, RULE_WORDS, collectAnchors, collectUserConstraints, renderAnchors, renderUserConstraints } from "./anchors.ts";
 import { isSummaryMessage } from "./compact.ts";
 import { collectFileOps, renderFileOps } from "./fileOps.ts";
 import { contentText } from "./items.ts";
@@ -40,6 +40,9 @@ const MAX_GOAL_CHANGES = 5;
 const GOAL_CHANGE =
   /^(?:instead\b|actually,?\s+(?:let'?s|instead|forget|scrap)\b|forget (?:that|it|about|everything)\b|scratch that\b|new plan\b|change of plan\b)/i;
 const NEGATIVE = /\b(?:never|not|no|avoid|stop|without)\b|n't\b/i;
+const PERMISSION = /\b(?:can|may|ok|okay|fine|allowed|go ahead|feel free)\b/i;
+/** pi's prefix for a branch_summary entry (its BRANCH_SUMMARY_PREFIX is not exported) */
+export const BRANCH_SUMMARY_PREFIX = "The following is a summary of a branch that this conversation came back from:";
 const FILLER = new Set(
   "never always only avoid stop using make sure must should please you the and for with not don't dont do any all can now this that from into".split(" "),
 );
@@ -54,8 +57,10 @@ const flatClip = (s: string, max = 300): string => {
 };
 
 /**
- * A later sentence that names every content word of the constraint with the
- * opposite polarity reverses it: "Never use npm." then "You can use npm now."
+ * A later rule or permission that names every content word of the constraint
+ * with the opposite polarity reverses it: "Never use npm." then "You can use
+ * npm now." A question or a complaint ("Did you delete the prod database?",
+ * "Run the tests, no need to ask.") does not.
  * ponytail: exact word match, no stemming ("use" vs "using" misses); grow it
  * only if the benchmark shows misses that matter.
  */
@@ -63,30 +68,34 @@ const reverses = (constraint: string, later: string): boolean => {
   const content = words(constraint).filter((w) => !FILLER.has(w));
   if (content.length === 0) return false;
   return sentences(later).some((s) => {
-    const have = new Set(words(s));
-    return content.every((w) => have.has(w)) && NEGATIVE.test(s) !== NEGATIVE.test(constraint);
+    const t = s.trim();
+    if (t.endsWith("?") || !(RULE_WORDS.test(t) || PERMISSION.test(t))) return false;
+    const have = new Set(words(t));
+    return content.every((w) => have.has(w)) && NEGATIVE.test(t) !== NEGATIVE.test(constraint);
   });
 };
 
 export function buildLedger(messages: readonly MessageLike[]): Ledger {
-  // A bridged summary carries the previous ledger; reading facts back out of
-  // it would let them cascade, so only source messages count.
+  // A bridged summary carries the previous ledger and a branch summary is a
+  // model's paraphrase; reading facts back out of them would let them
+  // cascade, so only source messages count.
   const source: MessageLike[] = [];
   const sourceIndex: number[] = [];
   const users: { text: string; index: number }[] = [];
   messages.forEach((m, i) => {
     const text = m.role === "user" ? contentText(m.content) : "";
-    if (m.role === "user" && isSummaryMessage(text)) return;
+    if (m.role === "user" && (isSummaryMessage(text) || text.startsWith(BRANCH_SUMMARY_PREFIX))) return;
     source.push(m);
     sourceIndex.push(i);
-    if (text.trim()) users.push({ text, index: i });
+    // a user `!cmd` run (pi renders it "Ran `cmd`") is output, not the user's words
+    if (text.trim() && !text.startsWith("Ran `")) users.push({ text, index: i });
   });
 
   // a re-stated constraint moves to its newest position, so an earlier
   // reversal no longer applies to it
   const found = new Map<string, number>();
   for (const u of users) {
-    for (const text of collectUserConstraints([u.text], [], Infinity)) {
+    for (const text of collectUserConstraints([u.text], Infinity)) {
       found.delete(text);
       found.set(text, u.index);
     }

@@ -6,7 +6,8 @@
  * Takeover points (see project README and reference/PIN.md):
  * - session_before_compact: replaces ALL pi compaction (auto, /compact,
  *   ctx.compact()) with compactWindow: a code-built ledger, a structured
- *   narrative from the model, <=20k tokens of real user messages, and a
+ *   narrative from the model, <=20k tokens of real user messages (a tenth
+ *   of a smaller window), and a
  *   raw tail of recent turns kept verbatim (pi keeps those entries via
  *   firstKeptEntryId).
  * - context: renders retained user messages, then the summary, then the
@@ -34,7 +35,6 @@ import type { Message, UserMessage } from "@earendil-works/pi-ai";
 import type {
   CompactionEntry,
   ExtensionAPI,
-  ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { convertToLlm, estimateTokens } from "@earendil-works/pi-coding-agent";
@@ -132,8 +132,6 @@ const NEW_CONTEXT_WINDOW_MESSAGE =
 
 interface MempactDetails {
   mempact: {
-    /** 1: Phase 0 entries (summary + staples in entry.summary, no raw tail) */
-    version: 1 | 2;
     /** codex replacement history: retained real user messages, oldest-first. */
     retainedUserMessages: string[];
     window: { windowNumber: number };
@@ -144,7 +142,6 @@ interface MempactDetails {
     narrative?: string;
     /** messages pi renders from firstKeptEntryId up to this entry (the raw tail) */
     tailMessages?: number;
-    rehydratePaths?: string[];
     /** file contents read once at compaction, rendered after the raw tail */
     rehydrated?: string;
   };
@@ -248,6 +245,14 @@ export default function (pi: ExtensionAPI) {
   const recentSavings: number[] = [];
   let pendingTokensBefore: number | null = null;
   let thrashNotified = false;
+  // The latest compaction was overflow-triggered and no user message has
+  // arrived since. A second overflow then means compaction cannot get the
+  // context under the window, and resuming would loop.
+  let overflowSinceUser = false;
+
+  pi.on("message_start", (event) => {
+    if (event.message.role === "user") overflowSinceUser = false;
+  });
 
   // -------------------------------------------------------------------------
   // session_start: restore window number + reminder one-shot from the JSONL
@@ -291,7 +296,6 @@ export default function (pi: ExtensionAPI) {
           tokensBefore: preparation.tokensBefore,
           details: {
             mempact: {
-              version: 2,
               retainedUserMessages: [],
               window: { windowNumber },
               newContext: true,
@@ -314,12 +318,23 @@ export default function (pi: ExtensionAPI) {
     // index each came from. Compaction entries are not messages, so the
     // ledger is built from source records and never from a summary. Custom
     // messages (mempact's own reminder and continue notes) stay out too:
-    // they are not the user's words.
+    // they are not the user's words. Branch summaries go in, as pi renders
+    // them, so the summarizer keeps them once they leave the tail (the
+    // ledger skips them). History before the latest new_context reset stays
+    // out: the reset deleted it.
     const messages: Message[] = [];
     const entryIndex: number[] = [];
+    const resetIdx = branchEntries.findLastIndex((e) => e.type === "compaction" && getMempactDetails(e)?.newContext);
     branchEntries.forEach((entry, i) => {
-      if (entry.type !== "message") return;
-      for (const m of convertToLlm([entry.message])) {
+      if (i <= resetIdx) return;
+      const source: AgentMessage | undefined =
+        entry.type === "message"
+          ? entry.message
+          : entry.type === "branch_summary" && entry.summary
+            ? { role: "branchSummary", summary: entry.summary, fromId: entry.fromId, timestamp: Date.parse(entry.timestamp) }
+            : undefined;
+      if (!source) return;
+      for (const m of convertToLlm([source])) {
         messages.push(m);
         entryIndex.push(i);
       }
@@ -396,13 +411,11 @@ export default function (pi: ExtensionAPI) {
         tokensBefore: preparation.tokensBefore,
         details: {
           mempact: {
-            version: 2,
             retainedUserMessages: result.retainedUserMessages,
             window: { windowNumber },
             summaryText: result.summaryText,
             narrative: result.narrative,
             tailMessages,
-            rehydratePaths: result.rehydratePaths,
             rehydrated: rehydrateFiles(ctx.cwd, result.rehydratePaths, model.contextWindow),
           },
         } satisfies MempactDetails,
@@ -484,9 +497,12 @@ export default function (pi: ExtensionAPI) {
     // `resume`: the compaction interrupted work (a tool loop was still running,
     // or the request overflowed) - only then is the continuation prompt sent.
     // A finished answer that merely crossed 90% must not spawn unasked work.
-    const triggerCompaction = (resume: boolean) => {
+    const triggerCompaction = (resume: boolean, newContext = false) => {
       if (compacting) return;
       compacting = true;
+      // set only once a compaction really starts, so a dropped request
+      // cannot turn a later compaction into a hard reset
+      if (newContext) window.requestNewContextWindow();
       // The callbacks run async; the extension ctx may be stale by then
       // (session replaced, /reload, or -p mode exiting), so guard all use.
       ctx.compact({
@@ -507,6 +523,7 @@ export default function (pi: ExtensionAPI) {
         },
         onError: (error) => {
           compacting = false;
+          window.takeNewContextWindowRequest();
           try {
             if (ctx.hasUI) ctx.ui.notify(`mempact compaction failed: ${error.message}`, "error");
           } catch {
@@ -521,16 +538,20 @@ export default function (pi: ExtensionAPI) {
 
     if (newContextRequested) {
       newContextRequested = false;
-      window.requestNewContextWindow();
+      overflowSinceUser = false;
       // never auto-continue: the turn's own new_context result would count as
       // mid-task, and the continue prompt points at a summary the reset deleted
-      triggerCompaction(false);
+      triggerCompaction(false, true);
       return;
     }
 
     // Replaces pi's built-in overflow recovery (disabled via settings).
     if (event.message.role === "assistant" && isContextOverflow(event.message, ctx.model?.contextWindow)) {
-      triggerCompaction(true);
+      const again = overflowSinceUser;
+      overflowSinceUser = true;
+      if (again && ctx.hasUI)
+        ctx.ui.notify("mempact: overflowed again right after an overflow compaction; compacting without resuming", "warning");
+      triggerCompaction(!again);
       return;
     }
 
@@ -565,6 +586,7 @@ export default function (pi: ExtensionAPI) {
         }
         return;
       }
+      overflowSinceUser = false;
       triggerCompaction(midTask);
       return;
     }

@@ -32,11 +32,11 @@ medium,fake,128000,0.9,mempact,1,live_constraints,1
 medium,fake,128000,0.9,mempact,1,reversal_present,1
 medium,fake,128000,0.9,mempact,1,stale,0
 medium,fake,128000,0.9,mempact,1,commands,1
-medium,fake,128000,0.9,mempact,1,error,0
+medium,fake,128000,0.9,mempact,1,error,1
 medium,fake,128000,0.9,mempact,1,anchors,1
 medium,fake,128000,0.9,mempact,1,goal,1
 medium,fake,128000,0.9,mempact,1,next_step,1
-medium,fake,128000,0.9,mempact,1,context_tokens,7674
+medium,fake,128000,0.9,mempact,1,context_tokens,7671
 medium,fake,128000,0.9,mempact,1,summarizer_calls,1
-medium,fake,128000,0.9,mempact,1,summarizer_input_tokens,110159
+medium,fake,128000,0.9,mempact,1,summarizer_input_tokens,22156
 medium,fake,128000,0.9,mempact,1,summarizer_output_tokens,208

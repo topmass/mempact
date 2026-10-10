@@ -7,9 +7,11 @@ const run = (id: string, command: string, text: string, isError = false, toolNam
 ];
 
 describe("collectCommands", () => {
-  it("records command, sniffed exit, and the line that names the error", () => {
+  it("records command, sniffed exit, and the typed error over a FAIL header", () => {
     const [c] = collectCommands(run("c1", "pnpm test", "> vitest run\n\n FAIL  test/x.test.ts > adds\nAssertionError: x\n\nCommand exited with code 1"));
-    expect(c).toMatchObject({ tool: "bash", command: "pnpm test", exit: 1, failed: true, error: "FAIL  test/x.test.ts > adds", index: 1 });
+    expect(c).toMatchObject({ tool: "bash", command: "pnpm test", exit: 1, failed: true, error: "AssertionError: x", index: 1 });
+    const [d] = collectCommands(run("c2", "make", "make: *** [all] failed\nCommand exited with code 2"));
+    expect(d!.error).toBe("make: *** [all] failed");
   });
 
   it("keeps only the newest result of a re-run command, newest first", () => {
