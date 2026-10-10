@@ -2,92 +2,94 @@
   <img src="assets/banner.png" alt="mempact - context compaction for coding agents" width="100%">
 </p>
 
-<p align="center">
-  <img alt="tests: 83 passing" src="https://img.shields.io/badge/tests-83%20passing-201b15">
-  <img alt="core: zero runtime deps" src="https://img.shields.io/badge/core-zero%20runtime%20deps-201b15">
-  <a href="reference/PIN.md"><img alt="base engine: openai/codex" src="https://img.shields.io/badge/base%20engine-openai%2Fcodex-c53a1f"></a>
-  <img alt="license Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-201b15">
-</p>
-
 # mempact
 
-**Context compaction for coding agents.** When context fills up, every
-framework replaces the conversation with a model-written summary.
-Summaries drop the facts a resuming agent needs: which files changed,
-what the last test said, what the user asked for. mempact has code, not
-the model, append those facts to the summary.
+mempact is context compaction for coding agents. It ships as an extension
+for the [pi coding agent](https://github.com/badlogic/pi-mono) and as a
+TypeScript core with no runtime dependencies that other harnesses can call.
+When the context window fills, code records the facts the next window needs
+in a typed ledger. The model writes only the story around them: the goal,
+the decisions, what failed, and the next step.
 
-Zero-dependency TypeScript core for any harness or local model, plus a
-drop-in [pi coding agent](https://github.com/badlogic/pi-mono) extension
-that hot-swaps pi's default compaction in one settings line.
+## Why
 
-## What happens as a session grows
+Facts stored in prose summaries decay when each summary is summarized again
+([cascading compaction](https://arxiv.org/abs/2605.24657),
+[Compaction Cliff](https://arxiv.org/abs/2608.22752)). User rules get
+violated more often after compaction, and pinning them outside the summary
+fixes that ([ConstraintRot](https://arxiv.org/abs/2606.22528)). Codex's
+compaction quality comes from
+[model training](https://openai.com/index/gpt-5-1-codex-max/), which an
+open-source harness cannot copy, so mempact competes on harness design.
 
-**From the first message.** Every tool output is capped at 12,000 bytes
-the moment it is recorded (codex's rule: a 10KB policy with 1.2x slack),
-so no single command dump can flood the window. If a `.mempact/memory.md`
-exists, it is re-injected fresh from disk into every request, so it
-structurally cannot be compacted away. An output over the cap is first
-saved whole to `.mempact/artifacts/`, and the truncated text names the
-artifact so `recall` can page it back by line range. Both live in your
-repo; add `.mempact/` (or just `.mempact/artifacts/`) to `.gitignore` if
-you do not want them committed.
-Everything ever recorded stays on disk, and a `recall` tool can grep it
-back at any time. Demotion, never deletion.
+## How it works
 
-**At about 63% of the window.** Old tool outputs go on a diet: every
-tool result older than the newest 3 is stubbed down to its first line
-plus a pointer to `recall`. This is Anthropic's finding (mechanically
-clearing tool results beats summarizing them) applied non-destructively;
-the session file keeps the originals. The tier is decided from an
-estimate of the unstubbed messages, not from pi's reported usage: that
-comes from the already-stubbed request, so a usage threshold would flip
-on and off every other turn and thrash the prompt cache. Less noise for
-the model, and the expensive compaction gets postponed, sometimes past
-the end of the session entirely. The model can ask where it stands at
-any time with `get_context_remaining`.
+After a compaction, the next request reads in this order:
 
-**Near the limit.** A one-shot reminder fires (codex verbatim), and if a
-memory file exists the model is told to persist anything durable NOW via
-`update_memory`. Flush before discard (OpenClaw's invariant).
+1. **Project memory.** If `.mempact/memory.md` exists, it is read from disk
+   and sent as the first message on every request. Compaction never touches
+   it, and the prompt-cache prefix stays stable until the file changes.
+2. **Recent user messages, verbatim.** The newest real user messages from
+   before the raw tail, up to 20k tokens. This is codex's rule.
+3. **The summary message.** It has four parts:
+   - codex's handoff bridge text, kept verbatim;
+   - the **narrative**, written by the model under fixed headings: Goal,
+     Decisions and why, Approaches that failed, Current work, Next step,
+     Open questions;
+   - the **ledger**, built by code from the full session records every time;
+   - a stale-intent note: the summary is reference, and the latest user
+     message wins.
+4. **The raw tail.** The most recent messages, kept verbatim, up to 12k
+   tokens or a tenth of the window, whichever is smaller. The cut never
+   splits a tool call from its results.
+5. **Rehydrated files.** The current text of up to five recently modified
+   files, read from disk once at compaction. Large or missing files are
+   listed by path only.
 
-**At 90%: the compaction itself.** A pipeline:
+### The ledger
 
-1. The most recent turns, up to 12k tokens, stay verbatim as a raw tail.
-   The cut only falls between complete tool calls and their results.
-2. Code builds a ledger from the whole session file, never from an
-   earlier summary, so facts cannot decay across rounds:
-   `<modified-files>` and `<read-files>`, `<commands>` with exit codes
-   and the line that names each error, `<user-constraints>` (rule-shaped
-   sentences from the user's own messages, verbatim, marked when a later
-   message reverses them; rule survival after compaction is binary and
-   pinning restores it, per arXiv 2606.22528), `<anchors>` (URLs, commit
-   SHAs, PR/issue numbers, error codes; Hermes measured this index lifting
-   closed-book recall from 23% to 60%), and `<latest-user-request>`.
-3. The session's model writes only a narrative for the turns before the
-   tail, in fixed sections (Goal, Decisions and why, Approaches that
-   failed, Current work, Next step, Open questions), told that the ledger
-   already carries the facts. Code checks it: every section present, not
-   cut off, and a Next step that names a modified file or command. One
-   retry on failure, then it ships with a note. Codex's front-trim retry
-   handles an overflowing request.
-4. The request is assembled codex-style: up to 20k tokens of the newest
-   real user messages, then the summary (codex's handoff text, the
-   narrative, the ledger, and one guard line: the summary is reference,
-   the latest user message always wins; Hermes's models kept re-doing
-   cancelled work), then the raw tail, then the current text of up to 5
-   recently modified files read from disk once. If the compaction
-   interrupted a tool loop, a hidden continuation prompt resumes the work
-   (interactive and RPC modes; a one-shot `pi -p` run ends when its loop
-   aborts). A finished answer that merely crossed 90% is left alone.
-5. If two consecutive compactions each freed under 10%, the auto
-   trigger pauses instead of looping.
+`core/ledger.ts` builds the ledger from source messages only, never from an
+earlier summary, so its facts cannot decay across rounds. It holds:
 
-The next window opens with memory first, recent user words verbatim, the
-summary with its ledger, the raw tail, the rehydrated files, and `recall`
-standing by.
+- modified files and read files;
+- commands with their exit codes and the line that names each error;
+- user constraints: rule-shaped sentences from the user's own messages,
+  quoted verbatim, marked superseded when a later message reverses them;
+- explicit goal changes ("new plan", "scratch that", and similar);
+- identifiers: URLs, commit SHAs, PR and issue refs, error codes;
+- the latest user request.
 
-## Install: hot-swap pi's compaction
+Each list has a cap, so long sessions drop the oldest entries.
+
+### The narrative
+
+The summarizer gets the previous narrative as input, never the previous
+summary with its ledger, so summaries are never compacted into summaries.
+`core/summarySchema.ts` checks the result: every heading present and
+non-empty, not cut off by the output limit, and a Next step that names a
+modified file or command when the ledger has any. On failure it asks once
+more, then accepts the result with a note listing what is still missing.
+
+### Between compactions
+
+- **Output cap.** Tool outputs over 12,000 bytes are middle-truncated when
+  recorded (codex's 10KB policy times 1.2). The full text is saved first as
+  an artifact file under `.mempact/artifacts/`, and the truncated text names
+  the artifact id.
+- **Tool-output clearing.** When the unstubbed context reaches 70% of the
+  compaction limit (about 63% of the window), every tool output except the
+  newest three is replaced in the request by a one-line stub. The session
+  file keeps the originals.
+- **Trigger.** Compaction fires at 90% of the window (codex's rule). A
+  one-shot reminder fires 10k tokens before that, and asks the model to
+  save state with `update_memory` when a memory file exists.
+- **Thrash guard.** If the last two compactions each freed under 10%, the
+  automatic trigger pauses. Manual `/compact` and overflow recovery stay on.
+- **Resume.** If the compaction interrupted a tool loop or recovered an
+  overflow, a hidden prompt resumes the task. This works in interactive and
+  RPC modes. A one-shot `pi -p` run ends when its loop aborts.
+
+## Install for pi
 
 ```bash
 pi install git:github.com/topmass/mempact
@@ -95,52 +97,101 @@ pi install git:github.com/topmass/mempact
 pi -e git:github.com/topmass/mempact
 ```
 
-Then hand compaction timing fully to mempact in
-`~/.pi/agent/settings.json` (mempact warns until you do):
+Then hand compaction timing to mempact in `~/.pi/agent/settings.json`.
+mempact warns until you do:
 
 ```json
 { "compaction": { "enabled": false } }
 ```
 
-`compaction.enabled: false` also disables pi's built-in overflow
-recovery, so if mempact fails to load there is no compaction at all.
-`/mempact` shows the window number, trigger status, and memory state.
-Knobs are module constants at the top of `pi/index.ts`
-(`CLEAR_TOOL_OUTPUTS_AT_FRACTION`, ...) and peel back to the pure codex
-port. Degrades to silence, never breakage: no model, no auth, or a failed
-summary call hands the compaction back to pi. Typechecked against pi
-0.78; the peer range allows 0.78 to 0.80.
+`compaction.enabled: false` also disables pi's built-in overflow recovery,
+so if mempact fails to load there is no compaction at all. With no model,
+no auth, or a failed summary call, mempact falls back to pi's compaction.
 
-## Standalone core
+mempact writes `.mempact/memory.md` and `.mempact/artifacts/` into your
+project. Add `.mempact/` (or only `.mempact/artifacts/`) to `.gitignore` if
+you do not want them committed.
 
-`core/` has no runtime dependencies and only type imports from pi-ai.
-`compactWindow` runs the whole compaction as one pure function; pass it
-the session messages and a `summarize` callback:
+Settings are module constants at the top of `pi/index.ts`, such as
+`CLEAR_TOOL_OUTPUTS_AT_FRACTION` and `CONTINUE_AFTER_AUTO_COMPACT`. The
+extension typechecks against pi 0.78, and the peer range allows 0.78 to
+0.80.
 
-```ts
-import {
-  compactWindow, OverflowError,               // the pipeline
-  buildLedger, renderLedger, validateSummary, // its parts
-  clearOldToolOutputs, buildCompactedHistoryWithLimit,
-} from "./core/index.ts";
-```
+## Tools and command
+
+- `recall`: searches the full session history, including compacted turns
+  and cleared outputs. With an `artifact` id, it reads a saved output by
+  line range, or lists the lines that match a query.
+- `update_memory`: sets a section of `.mempact/memory.md` or appends one
+  line to it. Sections: Goal, Plan, Decisions, Files, Next, Open.
+- `get_context_remaining`: reports tokens left before compaction.
+- `new_context`: starts a new window with no summary (codex's hard reset).
+- `/mempact`: shows the window number, token use against the trigger,
+  memory file state, the count of cleared outputs, and whether the trigger
+  is paused.
 
 ## Benchmark
 
-`pnpm bench` runs pi's compaction, codex's, and mempact's over the same
-synthetic sessions, compacting all three at the same points. It scores
-which planted facts survive each round, stale constraints, and cost. With
-`--replay`, it also checks whether the next action matches the one taken
-with full history. Results go to `bench/results/`. See
-[bench/README.md](bench/README.md) for what it measures and its limits.
+`bench/` replays seeded synthetic sessions with planted facts under three
+conditions in one code path: pi's real compaction, the codex prompt, and
+mempact. It scores which facts survive each round by mechanical text
+matching, plus stale constraints and token cost. With `--replay` and any
+OpenAI-compatible endpoint, it also checks whether the model's next action
+after compaction matches the one it picks with full history. See
+[bench/README.md](bench/README.md) for the metrics, how to run it, and its
+limits.
+
+The results in `bench/results/` come from an offline run with a fake
+summarizer. They show the ledger property: on the small and large
+fixtures, mempact kept 100% of planted files and live constraints across
+all three rounds. They say nothing about summary quality. No live model run
+has been checked in yet.
+
+## Using the core in other frameworks
+
+`core/` has no runtime dependencies and only type imports from pi-ai.
+`compactWindow` runs one compaction. You supply the model call and a token
+estimate:
+
+```ts
+import { compactWindow, OverflowError } from "./core/index.ts";
+
+const result = await compactWindow(
+  { messages, previous, contextWindow, maxOutputTokens, systemPrompt, instructions },
+  {
+    // throw OverflowError when the request does not fit the window
+    summarize: (systemPrompt, messages, maxTokens) => Promise<string>,
+    estimateTokens: (message) => number,
+  },
+);
+// result: ledger, narrative, retainedUserMessages, rawTail,
+//         summaryText, rehydratePaths, validation
+```
+
+`previous` is `{ narrative, start }` from the last round. The caller lays
+out the request and reads the rehydrated files. `clearOldToolOutputs`, the
+memory helpers in `core/memory.ts`, and the recall helpers in
+`core/recall.ts` are exported for the other layers.
+
+## Not here on purpose
+
+- No post-compaction quiz or self-check by the model.
+- No measured-quality claims until live benchmark results are checked in.
 
 ## Development
 
 ```bash
-pnpm install && pnpm test   # 83 vitest cases, incl. byte-exact parity with codex's truncation and fold
+pnpm install
+pnpm test        # the test suite, including byte-exact parity with codex's truncation
+pnpm typecheck
 ```
 
-Base engine derived from [openai/codex](https://github.com/openai/codex)
-@ `rust-v0.142.5` (Apache-2.0), Rust sources vendored under `reference/`,
-the handoff bridge text and constants verbatim. The mechanical layers are original to
-this repo. Apache-2.0 throughout.
+## Lineage and license
+
+The base engine is a TypeScript port of
+[openai/codex](https://github.com/openai/codex) at tag `rust-v0.142.5`. The
+Rust sources it was ported from are vendored under `reference/`, and
+[reference/PIN.md](reference/PIN.md) records the commit. The handoff bridge
+text and trigger constants are kept verbatim. The ledger, narrative schema,
+clearing, artifacts, memory and benchmark are original to this repo.
+Apache-2.0 throughout.

@@ -2,7 +2,7 @@
   "name": "mempact",
   "version": "0.2.0",
   "private": true,
-  "description": "Context compaction for coding agents: codex's engine plus mechanical fact carriage. Drop-in pi extension.",
+  "description": "Context compaction for coding agents: a code-built fact ledger plus a structured model narrative. pi extension and framework-agnostic core.",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": ["pi-package", "context-compaction", "context-engineering", "coding-agent"],
