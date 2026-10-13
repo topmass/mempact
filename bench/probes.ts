@@ -7,6 +7,7 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
+import { serializeConversation } from "@earendil-works/pi-coding-agent";
 import { OverflowError } from "../core/pipeline.ts";
 import { userMessage } from "./conditions.ts";
 
@@ -27,7 +28,8 @@ export const VERDICT_SCORE: Record<Verdict, number> = { correct: 1, partial: 0.5
 const MAX_PROBES = 8;
 const UNSURE = /\b(?:unknown|unclear|uncertain|not sure|not stated|not specified)\b/i;
 
-const PROBE_PROMPT = `The conversation above is one stretch of a coding session. The agent will soon lose it and keep only a compacted summary. Write up to ${MAX_PROBES} question/answer pairs that an agent resuming this session later would need answered, in three kinds:
+const PROBE_SYSTEM = "You write test questions about a coding session transcript. You never act in the session or call tools.";
+const PROBE_PROMPT = `The transcript above is one stretch of a coding session. The agent will soon lose it and keep only a compacted summary. Write up to ${MAX_PROBES} question/answer pairs that an agent resuming this session later would need answered, in three kinds:
 - "rationale": why a decision was made, or what approach failed and why.
 - "rule": something the user told the agent to do or never do, and whether it was later lifted.
 - "state": which files were changed, the last failing command and its error, or the current goal.
@@ -53,7 +55,9 @@ export function parseProbes(text: string, round: number): Probe[] {
 
 export async function generateProbes(ask: Ask, drained: Message[], round: number): Promise<Probe[]> {
   try {
-    return parseProbes(await ask("", [...drained, userMessage(PROBE_PROMPT)], 2048), round);
+    // as text, not live turns: given the turns, the model resumes the agent's work instead
+    const transcript = `<transcript>\n${serializeConversation(drained)}\n</transcript>\n\n${PROBE_PROMPT}`;
+    return parseProbes(await ask(PROBE_SYSTEM, [userMessage(transcript)], 2048), round);
   } catch (error) {
     if (error instanceof OverflowError) return [];
     throw error;
