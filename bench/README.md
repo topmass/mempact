@@ -1,7 +1,7 @@
 # mempact bench
 
 A reproducible multi-round compaction benchmark for coding-agent sessions.
-It runs three compaction rules over the same session, compacts all of them at
+It runs four compaction rules over the same session, compacts all of them at
 the same message indices, and scores what survives each round.
 
 ## What it measures
@@ -11,15 +11,17 @@ Per condition and per round, from the context the agent sees after compaction:
 - **Mechanical retention, no model needed.** Each fixture plants facts and records them in a list: files, live user constraints, a constraint the user later reverses, commands, a failing test's error line, PR/issue/URL/SHA anchors, the current goal, and the current next step. A fact counts as present when its text appears (case-insensitive), or when all of its keys match one line, so a paraphrase can still count.
 - **Stale rate.** The share of reversed constraints that still read as live: the old rule is present on a line with no "superseded" style marker, and the reversal is absent.
 - **Cost.** Context tokens after compaction, plus summarizer calls, input tokens and output tokens. Tokens are pi's chars/4 estimate, not API usage.
-- **Paired replay (`--replay`, needs a model).** At each boundary the model picks its next action twice, with the same system prompt and tools: once from the full raw history, once from the compacted context, each followed by the user message "continue". A match means the same first tool and the same path or command. It also counts re-reads of files already read and re-runs of commands already run. When the raw history no longer fits the model, the reference is skipped (`replay_skipped`).
+- **Probes (real transcripts with a model).** At each boundary the model reads the messages drained that round and writes up to 8 questions with reference answers, of three kinds: rationale, rule and state. Every condition answers every probe so far from its compacted context, and the model grades each answer correct (1), partial (0.5) or wrong (0). `probe_score_age1plus` covers only probes from earlier rounds, so decay across compactions shows. Probe, answer and judge calls run with thinking off.
+- **Paired replay (`--replay`, needs a model).** For a real transcript the reference is the transcript's own next assistant turn, the model gets the transcript's tool names, and `replay_judged` grades whether the proposed action pursues the same intent. At each boundary the model picks its next action twice, with the same system prompt and tools: once from the full raw history, once from the compacted context, each followed by the user message "continue". A match means the same first tool and the same path or command. It also counts re-reads of files already read and re-runs of commands already run. When the raw history no longer fits the model, the reference is skipped (`replay_skipped`).
 
 ## Conditions
 
 - `pi`: pi's own `prepareCompaction` and `compact` from `@earendil-works/pi-coding-agent` 0.78, run on an in-memory session. `prepareCompaction` is not in pi's package exports, so `conditions.ts` imports pi's compiled file directly. The bench's summarizer stands in for pi's model call. pi keeps the newest 20k tokens raw.
 - `codex`: codex's Memento rule. The summarizer gets the whole in-window history plus codex's "CONTEXT CHECKPOINT COMPACTION" prompt (`reference/codex-rs/prompts/templates/compact/prompt.md`). The new context is the newest real user messages under 20k tokens, then the summary.
 - `mempact`: `compactWindow` from `core/pipeline.ts`, laid out as `pi/index.ts` renders it: retained user messages, the summary with its ledger, then the raw tail.
+- `ledger`: mempact without the narrative. Same retained messages, ledger and raw tail, no summarizer call. It shows what the model-written part adds.
 
-All three share one `summarize` function and one trigger: compaction fires when the fullest condition's context reaches `trigger * window`.
+All four share one `summarize` function and one trigger: compaction fires when the fullest condition's context reaches `trigger * window`.
 
 ## Running it
 
@@ -30,6 +32,10 @@ pnpm bench --transcript ~/.claude/projects/<project>/<session>.jsonl --window 64
 
 MEMPACT_BENCH_BASE_URL=http://host:8080/v1 MEMPACT_BENCH_API_KEY=... \
 MEMPACT_BENCH_MODEL=name pnpm bench --replay   # all fixtures, live model
+
+# many real sessions, resumable: one JSON per session in bench/results/live/ (gitignored)
+MEMPACT_BENCH_BASE_URL=... MEMPACT_BENCH_MODEL=... pnpm bench --transcripts list.txt --window 65536 --max-rounds 5 --replay
+node --experimental-strip-types bench/aggregate.ts   # per-round means, paired mempact comparisons, CSV
 ```
 
 With no `MEMPACT_BENCH_BASE_URL`, a deterministic fake summarizer stands in for the model. It copies the first 300 characters of each user message into the narrative headings. Offline numbers test the harness and mempact's code-built ledger. They say nothing about summary quality. If `MEMPACT_BENCH_MODEL` is unset, the bench uses the first id from `GET /models`.

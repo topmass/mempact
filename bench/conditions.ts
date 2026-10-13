@@ -1,5 +1,5 @@
 /**
- * Three compaction rules behind one signature. Each gets the full raw
+ * Four compaction rules behind one signature. Each gets the full raw
  * session up to the compaction boundary plus its own state from the last
  * round, and returns the context the agent would see next.
  */
@@ -12,7 +12,9 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { prepareCompaction } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 import { COMPACT_USER_MESSAGE_MAX_TOKENS, buildCompactedHistoryWithLimit, isSummaryMessage, summaryBridgeText } from "../core/compact.ts";
 import { contentText, messageText } from "../core/items.ts";
-import { OverflowError, compactWindow } from "../core/pipeline.ts";
+import { renderLedger } from "../core/ledger.ts";
+import { OverflowError, STALE_INTENT_NOTE, compactWindow } from "../core/pipeline.ts";
+import { NARRATIVE_SECTIONS } from "../core/summarySchema.ts";
 
 export interface BenchDeps {
   summarize: (systemPrompt: string, messages: Message[], maxTokens: number) => Promise<string>;
@@ -91,4 +93,20 @@ const mempact: Condition = async (messages, previous: { narrative: string; start
   };
 };
 
-export const CONDITIONS = { pi, codex, mempact } as const;
+const NO_NARRATIVE = NARRATIVE_SECTIONS.map((s) => `## ${s}\nNone`).join("\n\n");
+
+/** mempact without the narrative: same retained messages, ledger and raw
+ *  tail, no summarizer call. Isolates what the model-written part adds. */
+const ledger: Condition = async (messages, previous: { narrative: string; start: number } | undefined, deps) => {
+  const r = await compactWindow(
+    { messages, previous, contextWindow: deps.contextWindow, maxOutputTokens: deps.maxOutputTokens },
+    { summarize: async () => NO_NARRATIVE, estimateTokens: deps.estimateTokens },
+  );
+  const summary = [summaryBridgeText(renderLedger(r.ledger)), STALE_INTENT_NOTE].join("\n\n");
+  return {
+    contextAfter: [...r.retainedUserMessages.map(userMessage), userMessage(summary), ...r.rawTail],
+    state: { narrative: "", start: messages.length - r.rawTail.length },
+  };
+};
+
+export const CONDITIONS = { pi, codex, mempact, ledger } as const;

@@ -38,7 +38,7 @@ export async function firstModel(baseUrl: string, apiKey: string): Promise<strin
   return id;
 }
 
-const toChat = (systemPrompt: string, messages: readonly Message[]) => [
+export const toChat = (systemPrompt: string, messages: readonly Message[]) => [
   ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
   ...messages.map((m) => {
     if (m.role === "user") return { role: "user", content: contentText(m.content) };
@@ -55,7 +55,7 @@ interface ChatMessage {
   tool_calls?: { function: { name: string; arguments: string } }[];
 }
 
-async function chat(ep: Endpoint, body: Record<string, unknown>): Promise<ChatMessage> {
+export async function chat(ep: Endpoint, body: Record<string, unknown>): Promise<ChatMessage> {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${ep.baseUrl}/chat/completions`, {
       method: "POST",
@@ -75,6 +75,14 @@ export const endpointSummarize =
   async (systemPrompt: string, messages: Message[], maxTokens: number): Promise<string> =>
     (await chat(ep, { messages: toChat(systemPrompt, messages), max_tokens: maxTokens })).content ?? "";
 
+const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
+
+/** Same shape as endpointSummarize, with thinking off: probes, answers, judging. */
+export const endpointAsk =
+  (ep: Endpoint) =>
+  async (systemPrompt: string, messages: Message[], maxTokens: number): Promise<string> =>
+    (await chat(ep, { messages: toChat(systemPrompt, messages), max_tokens: maxTokens, ...NO_THINKING })).content ?? "";
+
 const REPLAY_SYSTEM =
   "You are a coding agent working in a TypeScript repository. Use the tools to act. Reply with exactly one tool call for your next action.";
 const param = (props: Record<string, string>) => ({
@@ -82,33 +90,64 @@ const param = (props: Record<string, string>) => ({
   properties: Object.fromEntries(Object.keys(props).map((k) => [k, { type: "string", description: props[k] }])),
   required: Object.keys(props),
 });
-const TOOLS = [
+const DEFAULT_TOOLS = [
   { name: "read", description: "Read a file", parameters: param({ path: "file path" }) },
   { name: "write", description: "Write a whole file", parameters: param({ path: "file path", content: "file content" }) },
   { name: "edit", description: "Replace text in a file", parameters: param({ path: "file path", oldText: "text to find", newText: "replacement" }) },
   { name: "bash", description: "Run a shell command", parameters: param({ command: "command line" }) },
 ].map((function_) => ({ type: "function", function: function_ }));
 
+/** The tools a transcript used, each with the argument names seen, all typed string. */
+export function transcriptTools(messages: readonly Message[]) {
+  const seen = new Map<string, Set<string>>();
+  for (const m of messages)
+    if (m.role === "assistant")
+      for (const c of m.content)
+        if (c.type === "toolCall") for (const k of Object.keys(c.arguments)) (seen.get(c.name) ?? seen.set(c.name, new Set()).get(c.name)!).add(k);
+  return [...seen].map(([name, keys]) => ({
+    type: "function",
+    function: { name, description: name, parameters: { type: "object", properties: Object.fromEntries([...keys].map((k) => [k, { type: "string" }])) } },
+  }));
+}
+
 export interface NextAction {
   tool: string;
   arg: string;
+  /** the call's arguments or the reply text, for the judge */
+  detail?: string;
 }
 
-export async function nextAction(ep: Endpoint, context: readonly Message[]): Promise<NextAction> {
+/** Lowercase tool name, and path ?? file_path ?? command, so pi's and Claude Code's tools compare. */
+export const toAction = (name: string, args: Record<string, unknown>, text = ""): NextAction => ({
+  tool: name.toLowerCase(),
+  arg: String(args.path ?? args.file_path ?? args.command ?? "").trim(),
+  detail: `${name} ${JSON.stringify(args).slice(0, 600)}${text ? `\n${text.slice(0, 600)}` : ""}`,
+});
+
+/** The first tool call of an assistant message, or its text when it calls none. */
+export const actionOf = (m: Message): NextAction => {
+  if (m.role !== "assistant") return { tool: "none", arg: "", detail: contentText(m.content).slice(0, 600) };
+  const call = m.content.find((c) => c.type === "toolCall");
+  return call?.type === "toolCall" ? toAction(call.name, call.arguments) : { tool: "none", arg: "", detail: contentText(m.content).slice(0, 600) };
+};
+
+/** A context that ends with a user message gets no extra "continue". */
+export async function nextAction(ep: Endpoint, context: readonly Message[], tools: object[] = DEFAULT_TOOLS): Promise<NextAction> {
+  const nudge: Message[] = context.at(-1)?.role === "user" ? [] : [{ role: "user", content: [{ type: "text", text: "continue" }], timestamp: 0 }];
   const reply = await chat(ep, {
-    messages: toChat(REPLAY_SYSTEM, [...context, { role: "user", content: [{ type: "text", text: "continue" }], timestamp: 0 }]),
-    tools: TOOLS,
+    messages: toChat(REPLAY_SYSTEM, [...context, ...nudge]),
+    tools,
     tool_choice: "auto",
     max_tokens: 2048,
+    ...NO_THINKING,
   });
   const call = reply.tool_calls?.[0]?.function;
-  if (!call) return { tool: "none", arg: "" };
+  if (!call) return { tool: "none", arg: "", detail: (reply.content ?? "").slice(0, 600) };
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(call.arguments) as Record<string, unknown>;
   } catch {}
-  const arg = args.path ?? args.file_path ?? args.command ?? "";
-  return { tool: call.name, arg: String(arg).trim() };
+  return toAction(call.name, args, reply.content ?? "");
 }
 
 /** Whether an action repeats work already in the raw history: a read of a
@@ -116,7 +155,11 @@ export async function nextAction(ep: Endpoint, context: readonly Message[]): Pro
 export function repeats(action: NextAction, history: readonly Message[]): { reread: number; rerun: number } {
   const paths = new Set<string>();
   for (const m of history)
-    if (m.role === "assistant") for (const c of m.content) if (c.type === "toolCall" && typeof c.arguments.path === "string") paths.add(c.arguments.path);
+    if (m.role === "assistant")
+      for (const c of m.content) {
+        const path = c.type === "toolCall" ? (c.arguments.path ?? c.arguments.file_path) : undefined;
+        if (typeof path === "string") paths.add(path.trim());
+      }
   const commands = new Set(collectCommands(history, Infinity).map((c) => c.command));
   return {
     reread: action.tool === "read" && paths.has(action.arg) ? 1 : 0,
