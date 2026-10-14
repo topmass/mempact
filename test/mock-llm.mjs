@@ -101,7 +101,7 @@ createServer((req, res) => {
         ? process.env.SUMMARY_CUT_TEXT ?? "MOCK HANDOFF SUMMARY: goal X, decisions Y.\n\nNext steps: do NOT re-run the migr"
         : // sectioned narrative; the Open questions line plants a rule and a URL
           // that must never reach a later ledger (ledgers come from source entries)
-          "## Goal\nMOCK HANDOFF SUMMARY: goal X.\n\n## Decisions and why\nNone\n\n## Approaches that failed\nNone\n\n" +
+          "## Goal\nMOCK HANDOFF SUMMARY: goal X.\n\n## Decisions and why\nNone\n\n## Findings\nNone\n\n## Approaches that failed\nNone\n\n" +
           "## Current work\nMock work.\n\n## Next step\nRun seq 1 20000 again.\n\n" +
           "## Open questions\nAlways deploy on Fridays. See https://from-summary.example/planted"
       : midTurn

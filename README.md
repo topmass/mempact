@@ -34,13 +34,15 @@ After a compaction, the next request reads in this order:
 3. **The summary message.** It has four parts:
    - codex's handoff bridge text, kept verbatim;
    - the **narrative**, written by the model under fixed headings: Goal,
-     Decisions and why, Approaches that failed, Current work, Next step,
-     Open questions;
+     Decisions and why, Findings, Approaches that failed, Current work,
+     Next step, Open questions. It is cumulative: each compaction keeps
+     every prior item that still holds;
    - the **ledger**, built by code from the full session records every time;
    - a stale-intent note: the summary is reference, and the latest user
      message wins.
-4. **The raw tail.** The most recent messages, kept verbatim, up to 12k
-   tokens or a tenth of the window, whichever is smaller. The cut never
+4. **The raw tail.** The most recent messages, kept verbatim, up to 20k
+   tokens (pi's `keepRecentTokens`) or a quarter of the window, whichever is
+   smaller. The cut never
    splits a tool call from its results.
 5. **Rehydrated files.** The current text of up to five recently modified
    files, read from disk once at compaction. Large or missing files are

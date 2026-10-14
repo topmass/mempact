@@ -36,7 +36,12 @@ MEMPACT_BENCH_MODEL=name pnpm bench --replay   # all fixtures, live model
 # many real sessions, resumable: one JSON per session in bench/results/live/ (gitignored)
 MEMPACT_BENCH_BASE_URL=... MEMPACT_BENCH_MODEL=... pnpm bench --transcripts list.txt --window 65536 --max-rounds 5 --replay
 node --experimental-strip-types bench/aggregate.ts   # per-round means, paired mempact comparisons, CSV
+
+# rerun only mempact on sessions already in bench/results/live/
+MEMPACT_BENCH_BASE_URL=... pnpm bench --transcripts list.txt --window 65536 --max-rounds 5 --replay --conditions mempact --reuse-probes
 ```
+
+`--conditions` picks which conditions run (default all four). Without `--reuse-probes` a session whose JSON exists is skipped. With it, the bench reruns that session at the saved round boundaries with the saved probes, recomputes rows, answers and actions for the listed conditions, keeps the rest, and overwrites the JSON. Use the same `--window` and `--max-rounds` as the saved run.
 
 With no `MEMPACT_BENCH_BASE_URL`, a deterministic fake summarizer stands in for the model. It copies the first 300 characters of each user message into the narrative headings. Offline numbers test the harness and mempact's code-built ledger. They say nothing about summary quality. If `MEMPACT_BENCH_MODEL` is unset, the bench uses the first id from `GET /models`.
 

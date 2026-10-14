@@ -1,6 +1,7 @@
 /**
  * pnpm bench [--fixture small|medium|large | --transcript path ... | --transcripts list.txt]
  *            [--window 128000] [--trigger 0.9] [--max-rounds N] [--replay] [--out bench/results]
+ *            [--conditions pi,codex,mempact,ledger] [--reuse-probes]
  *
  * Runs the four conditions in lockstep over one session: compaction fires
  * for all of them at the same message index, the first point where the
@@ -10,7 +11,9 @@
  *
  * Transcripts with a model also get model-made probes (bench/probes.ts) and
  * write one JSON per session to <out>/live/, skipping sessions already
- * there; bench/aggregate.ts summarizes them.
+ * there; bench/aggregate.ts summarizes them. With --reuse-probes an existing
+ * file is rerun instead: its boundaries and probes are reused, the listed
+ * conditions are recomputed, and the other conditions' results are kept.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -87,6 +90,11 @@ export async function runBench(opts: {
   /** probe writer, answerer and judge; probes run only on fixtures without planted facts */
   ask?: Ask;
   maxRounds?: number;
+  /** default: all of CONDITIONS */
+  conditions?: (keyof typeof CONDITIONS)[];
+  /** an earlier result for this session: rounds fire at its boundaries, its
+   *  probes are reused, and its rows for other conditions are kept */
+  saved?: BenchResult;
   log?: (line: string) => void;
 }): Promise<BenchResult> {
   const { messages, facts } = opts.fixture;
@@ -97,7 +105,9 @@ export async function runBench(opts: {
   const answers: BenchResult["answers"] = [];
   const actions: BenchResult["actions"] = [];
   const limit = Math.floor(opts.trigger * opts.window);
-  const names = Object.keys(CONDITIONS) as (keyof typeof CONDITIONS)[];
+  const names = opts.conditions ?? (Object.keys(CONDITIONS) as (keyof typeof CONDITIONS)[]);
+  const saved = opts.saved;
+  const boundaries = saved?.rows.filter((r) => r.condition === "full" && r.metric === "boundary").sort((x, y) => x.round - y.round).map((r) => r.value);
   const st = Object.fromEntries(names.map((c) => [c, { context: [] as Message[], state: undefined as unknown }]));
   const rows: Row[] = [];
   const add = (condition: string, round: number, metrics: Record<string, number | undefined>) => {
@@ -113,8 +123,8 @@ export async function runBench(opts: {
     const b = i + 1;
     if (b >= messages.length || messages[b]!.role === "toolResult") continue;
     const carried = Math.max(...names.map((c) => tokens(st[c]!.context)));
-    if (carried + slice < limit) continue;
-    if (carried >= limit) throw new Error(`window ${opts.window} is too small: a compacted context alone is ${carried} tokens`);
+    if (boundaries ? b !== boundaries[round] : carried + slice < limit) continue;
+    if (!boundaries && carried >= limit) throw new Error(`window ${opts.window} is too small: a compacted context alone is ${carried} tokens`);
     if (opts.maxRounds && round >= opts.maxRounds) break;
     round++;
     slice = 0;
@@ -125,7 +135,7 @@ export async function runBench(opts: {
 
     if (ask && !facts) {
       const t = Date.now();
-      const fresh = await generateProbes(ask, messages.slice(drainedFrom, b), round);
+      const fresh = saved ? saved.probes.filter((p) => p.round === round) : await generateProbes(ask, messages.slice(drainedFrom, b), round);
       probes.push(...fresh);
       opts.log?.(`  probes: ${fresh.length} new, ${probes.length} total (${since(t)})`);
     }
@@ -184,7 +194,15 @@ export async function runBench(opts: {
     }
     opts.log?.(`round ${round} done in ${since(roundStart)}`);
   }
-  return { rows, probes, answers, actions };
+  if (!saved) return { rows, probes, answers, actions };
+  // keep the saved boundary rows and the conditions not rerun
+  const kept = <T extends { condition: string }>(xs: T[]) => xs.filter((x) => !(names as string[]).includes(x.condition));
+  return {
+    rows: [...kept(saved.rows), ...rows.filter((r) => r.condition !== "full")].sort((x, y) => x.round - y.round),
+    probes: saved.probes,
+    answers: [...kept(saved.answers), ...answers],
+    actions: [...kept(saved.actions), ...actions],
+  };
 }
 
 const COLUMNS: [string, string][] = [
@@ -263,8 +281,12 @@ async function main() {
       "max-rounds": { type: "string" },
       replay: { type: "boolean", default: false },
       out: { type: "string", default: "bench/results" },
+      conditions: { type: "string", default: Object.keys(CONDITIONS).join(",") },
+      "reuse-probes": { type: "boolean", default: false },
     },
   });
+  const conditions = values.conditions.split(",").map((c) => c.trim()) as (keyof typeof CONDITIONS)[];
+  for (const c of conditions) if (!(c in CONDITIONS)) throw new Error(`unknown condition ${c}; known: ${Object.keys(CONDITIONS).join(", ")}`);
   let endpoint = endpointFromEnv();
   if (!endpoint && process.env.MEMPACT_BENCH_BASE_URL) {
     const { MEMPACT_BENCH_BASE_URL: baseUrl, MEMPACT_BENCH_API_KEY: apiKey = "" } = process.env;
@@ -280,9 +302,14 @@ async function main() {
   for (const source of sources) {
     const isTranscript = transcripts.length > 0;
     const jsonFile = join(live, `${basename(source, ".jsonl")}.json`);
+    let saved: BenchResult | undefined;
     if (isTranscript && existsSync(jsonFile)) {
-      console.error(`skip ${source}: ${jsonFile} exists`);
-      continue;
+      const file = JSON.parse(readFileSync(jsonFile, "utf8")) as Partial<BenchResult> & { error?: string };
+      if (!values["reuse-probes"] || file.error || !file.rows?.length) {
+        console.error(`skip ${source}: ${jsonFile} exists${values["reuse-probes"] ? " with no rounds to reuse" : ""}`);
+        continue;
+      }
+      saved = { rows: file.rows, probes: file.probes ?? [], answers: file.answers ?? [], actions: file.actions ?? [] };
     }
     const started = Date.now();
     const meta = { name: basename(source, ".jsonl"), source, model, window: Number(values.window), trigger: Number(values.trigger) };
@@ -300,13 +327,16 @@ async function main() {
         replay: values.replay ? endpoint : undefined,
         ask: endpoint && isTranscript ? endpointAsk(endpoint) : undefined,
         maxRounds: values["max-rounds"] ? Number(values["max-rounds"]) : undefined,
+        conditions,
+        saved,
         log: (l) => console.error(l),
       });
     } catch (error) {
       // one bad session must not end a long run
       if (!isTranscript) throw error;
       console.error(`session ${source} failed: ${(error as Error).stack}`);
-      writeFileSync(jsonFile, JSON.stringify({ ...meta, error: String((error as Error).message) }, null, 1));
+      // a failed rerun keeps the saved results
+      if (!saved) writeFileSync(jsonFile, JSON.stringify({ ...meta, error: String((error as Error).message) }, null, 1));
       continue;
     }
     const { rows } = result;

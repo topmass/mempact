@@ -36,6 +36,18 @@ describe("bench harness", () => {
     expect([metric(2, "probe_count"), metric(2, "probe_score_age1plus")]).toEqual([4, 0.5]);
   });
 
+  it("reruns one condition on saved boundaries and probes, keeping the others' results", async () => {
+    const ask = async (system: string) =>
+      system.startsWith("You grade") ? "correct" : system.startsWith("You are a coding agent") ? "Because it was faster." : '[{"kind":"rationale","question":"why question","answer":"because it was faster"}]';
+    const fixture = { ...loadFixture("small"), facts: undefined };
+    const opts = { fixture, window: 32_000, trigger: 0.9, summarize: fakeSummarize, ask, maxRounds: 2 };
+    const saved = await runBench({ ...opts, conditions: ["pi"] });
+    const merged = await runBench({ ...opts, ask: async () => "wrong", conditions: ["mempact"], saved });
+    expect(merged.probes).toEqual(saved.probes);
+    expect(merged.rows.filter((r) => r.condition !== "mempact")).toEqual(saved.rows);
+    expect(new Set(merged.answers.map((a) => `${a.condition}:${a.verdict}`))).toEqual(new Set(["pi:correct", "mempact:wrong"]));
+  });
+
   it("pairs sessions round by round and bootstraps the mean difference", () => {
     const row = (condition: string, round: number, value: number) => ({ condition, round, metric: "probe_score", value });
     const sessions = [

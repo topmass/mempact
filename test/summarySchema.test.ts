@@ -17,6 +17,7 @@ describe("validateSummary", () => {
   it("catches a missing and an empty section", () => {
     expect(validateSummary(narrative("x", "Approaches that failed"), buildLedger([]))).toEqual(['missing section "Approaches that failed"']);
     expect(validateSummary(narrative(""), buildLedger([]))).toEqual(['empty section "Next step"']);
+    expect(validateSummary(narrative("x", "Findings"), buildLedger([]))).toEqual(['missing section "Findings"']);
   });
 
   it("catches a generic next step only when the ledger has files or commands", () => {

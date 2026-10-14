@@ -29,7 +29,7 @@ const session = [
 const run = (replies: (string | Error)[], extra: Partial<Parameters<typeof compactWindow>[0]> = {}) => {
   const calls: Message[][] = [];
   const out = compactWindow(
-    { messages: session, contextWindow: 400, maxOutputTokens: 1000, ...extra },
+    { messages: session, contextWindow: 160, maxOutputTokens: 1000, ...extra },
     {
       estimateTokens: () => 10,
       summarize: async (_sys, msgs) => {
@@ -59,7 +59,7 @@ describe("compactWindow", () => {
   it("keeps the tail verbatim, summarizes the rest, and composes the summary message", async () => {
     const { out, calls } = run([good]);
     const r = await out;
-    // contextWindow 400 -> a 40-token tail budget -> tail starts after the b pair
+    // contextWindow 160 -> a 40-token tail budget -> tail starts after the b pair
     expect(r.rawTail).toEqual(session.slice(8));
     expect(calls).toHaveLength(1);
     expect(flat(calls[0]!)).not.toContain("done b");

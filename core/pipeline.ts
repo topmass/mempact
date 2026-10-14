@@ -15,7 +15,10 @@ import { KEEP_RECENT_TOOL_RESULTS, clearOldToolOutputs } from "./toolClearing.ts
 import { autoCompactTokenLimit } from "./trigger.ts";
 import { truncateMiddleChars } from "./truncate.ts";
 
-export const RAW_TAIL_TOKENS = 12_000;
+/** pi's keepRecentTokens */
+export const RAW_TAIL_TOKENS = 20_000;
+/** pi's reserveTokens */
+const SUMMARY_RESERVE_TOKENS = 16_384;
 const MAX_REHYDRATE_FILES = 5;
 /** pi's cut for tool output in its summarizer input; the ledger already
  *  carries files, commands and error lines verbatim */
@@ -93,12 +96,13 @@ export function tailStartIndex(
 
 /**
  * Output cap for the summary call, pi's formula (0.8 of the reserve, at most
- * the model's max output) with the reserve the 90% trigger leaves free.
- * Asking for the model's full max output on a 90%-full window makes
- * Anthropic reject input + max_tokens as over the limit.
+ * the model's max output). The reserve is pi's 16,384, or what the 90%
+ * trigger leaves free when that is larger, and at most a quarter of a small
+ * window so the input keeps room. The input is then trimmed to fit beside
+ * the cap, because Anthropic rejects input + max_tokens over the window.
  */
 const summaryMaxTokens = (contextWindow: number, maxOutputTokens: number): number => {
-  const reserve = contextWindow - (autoCompactTokenLimit(contextWindow) ?? 0);
+  const reserve = Math.max(contextWindow - (autoCompactTokenLimit(contextWindow) ?? 0), Math.min(SUMMARY_RESERVE_TOKENS, Math.floor(contextWindow / 4)));
   return Math.min(Math.floor(0.8 * reserve), maxOutputTokens > 0 ? maxOutputTokens : Infinity);
 };
 
@@ -112,9 +116,9 @@ const dropOldest = (msgs: Message[], count: number): Message[] => {
 export async function compactWindow(input: CompactWindowInput, deps: CompactWindowDeps): Promise<CompactWindowResult> {
   const { messages, previous } = input;
   const start = previous?.start ?? 0;
-  // a tenth of the window keeps small-window models from carrying a tail
+  // a quarter of the window keeps small-window models from carrying a tail
   // that refills them right away
-  const tailBudget = Math.min(RAW_TAIL_TOKENS, Math.floor(input.contextWindow / 10));
+  const tailBudget = Math.min(RAW_TAIL_TOKENS, Math.floor(input.contextWindow / 4));
   const tailStart = tailStartIndex(messages, start, tailBudget, deps.estimateTokens);
   const rawTail = messages.slice(tailStart);
   const ledger = buildLedger(messages);
@@ -140,7 +144,7 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
   // cut to pi's 2,000 characters (the retained messages and tail stay whole).
   const maxTokens = summaryMaxTokens(input.contextWindow, input.maxOutputTokens);
   const prior = previous?.narrative.trim()
-    ? [userMessage(`Prior narrative from earlier context windows. Keep what still holds and update it with the conversation that follows:\n\n${previous.narrative.trim()}`)]
+    ? [userMessage(`Prior narrative from earlier context windows. It is cumulative: keep every item that still holds, update changed ones, and add new ones from the conversation that follows:\n\n${previous.narrative.trim()}`)]
     : [];
   let history = messages
     .slice(start, tailStart)

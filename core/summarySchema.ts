@@ -1,8 +1,9 @@
 /**
  * The narrative half of a checkpoint. The model writes only what code cannot
- * know: the goal, why decisions were made, what failed, and what comes next.
- * Files, commands, constraints and identifiers live in the ledger, so the
- * model is told not to repeat them, and code checks the result mechanically.
+ * know: the goal, why decisions were made, what was learned, what failed,
+ * and what comes next. Files, commands, constraints and identifiers live in
+ * the ledger, so the model is told not to repeat its lists, and code checks
+ * the result mechanically.
  */
 
 import type { Ledger } from "./ledger.ts";
@@ -10,6 +11,7 @@ import type { Ledger } from "./ledger.ts";
 export const NARRATIVE_SECTIONS = [
   "Goal",
   "Decisions and why",
+  "Findings",
   "Approaches that failed",
   "Current work",
   "Next step",
@@ -22,13 +24,14 @@ export function narrativePrompt(ledgerBlock: string, instructions?: string): str
   return [
     "You are performing a CONTEXT CHECKPOINT COMPACTION. Write the narrative half of a handoff for another model that will resume the task.",
     "",
-    "Code already keeps a ledger, shown at the end of this message: files read and modified, commands with their exit codes and errors, the user's constraints, identifiers such as URLs, SHAs and PR numbers, and the latest user request. The ledger reaches the next model verbatim. Do not repeat its lists. Name a file or command only where the story needs it.",
+    "Code already keeps a ledger, shown at the end of this message: files read and modified, commands with their exit codes and errors, the user's constraints, identifiers such as URLs, SHAs and PR numbers, and the latest user request. The ledger reaches the next model verbatim. Do not repeat its lists. Name a file or command only where the story needs it. The ledger records that a file was read or a command ran, not what it showed: what a file or command output said belongs under Findings.",
     "",
     "Write exactly these markdown headings, in this order, each followed by its content:",
     ...NARRATIVE_SECTIONS.map((s) => `## ${s}`),
     "",
     "Goal: what the user wants, in their terms, including any change of direction.",
     "Decisions and why: each choice with the reason, so the next model does not reopen it.",
+    "Findings: facts learned from reading code and running things that the next model would otherwise have to rediscover, each with the exact file, function, identifier or error message, and the cause behind it.",
     "Approaches that failed: what was tried and why it did not work, so it is not tried again.",
     "Current work: what was in progress when the context filled up.",
     "Next step: the exact next action. Name the file to edit or the command to run.",
