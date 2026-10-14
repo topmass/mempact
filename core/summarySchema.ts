@@ -67,21 +67,27 @@ export const TRUNCATED_FAILURE = "cut off by the output limit; write it shorter"
 const HEADING = /^\s*(?:#{1,6}\s*)?(?:\d+[.)]\s*)?(?:\*\*)?\s*(?:\d+[.)]\s*)?([a-z][a-z ]*[a-z])\s*(?:\*\*)?\s*(?::\s*(?:\*\*)?\s*(.*?))?\s*$/i;
 const SECTION_NAMES = new Set(NARRATIVE_SECTIONS.map((s) => s.toLowerCase()));
 
-/** Known section name (lowercased) -> trimmed body. Other lines, including
- *  unknown headings, belong to the section above them. */
-const parseSections = (text: string): Map<string, string> => {
-  const out = new Map<string, string[]>();
-  let body: string[] | undefined;
+/** The text split at known section headings: a preamble named "", then one
+ *  chunk per heading holding its heading line and the lines below it.
+ *  Other lines, including unknown headings, belong to the chunk above. */
+export const sectionChunks = (text: string): { name: string; lines: string[] }[] => {
+  const chunks = [{ name: "", lines: [] as string[] }];
   for (const line of text.split("\n")) {
-    const m = HEADING.exec(line);
-    const name = m?.[1]!.replace(/\s+/g, " ").toLowerCase();
-    if (name && SECTION_NAMES.has(name)) {
-      body = m![2] ? [m![2]] : [];
-      out.set(name, body);
-    } else body?.push(line);
+    const name = HEADING.exec(line)?.[1]!.replace(/\s+/g, " ").toLowerCase();
+    if (name && SECTION_NAMES.has(name)) chunks.push({ name, lines: [] });
+    chunks.at(-1)!.lines.push(line);
   }
-  return new Map([...out].map(([name, lines]) => [name, lines.join("\n").trim()]));
+  return chunks;
 };
+
+/** Known section name (lowercased) -> trimmed body, including text on the
+ *  heading line. A repeated heading keeps the last body. */
+export const parseSections = (text: string): Map<string, string> =>
+  new Map(
+    sectionChunks(text)
+      .filter((c) => c.name)
+      .map((c) => [c.name, [HEADING.exec(c.lines[0]!)![2] ?? "", ...c.lines.slice(1)].join("\n").trim()]),
+  );
 
 /**
  * Mechanical checks, returned as a list of failures (empty = valid). The

@@ -90,6 +90,14 @@ describe("compactWindow", () => {
     expect(flat(calls[0]!)).not.toContain("OLD SUMMARY");
   });
 
+  it("carries prior findings the model dropped into the narrative and summary", async () => {
+    const prior = good.replace("## Findings\nNone", "## Findings\n- a.ts exports a default function");
+    const r = await run([good], { previous: { narrative: prior, start: 0 } }).out;
+    expect(r.validation.failures).toEqual([]);
+    expect(r.narrative).toContain("Carried from earlier windows:\n- a.ts exports a default function");
+    expect(r.summaryText).toContain("a.ts exports a default function");
+  });
+
   it("skips the model when the tail holds the whole window", async () => {
     const { out, calls } = run([], { contextWindow: 10_000, previous: { narrative: "KEEP ME", start: 0 } });
     const r = await out;

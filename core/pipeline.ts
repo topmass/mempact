@@ -8,6 +8,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import { COMPACT_USER_MESSAGE_MAX_TOKENS, isSummaryMessage, selectUserMessages, summaryBridgeText } from "./compact.ts";
+import { carryDroppedItems } from "./carry.ts";
 import { contentText } from "./items.ts";
 import { BRANCH_SUMMARY_PREFIX, type Ledger, buildLedger, renderLedger } from "./ledger.ts";
 import { TRUNCATED_FAILURE, narrativePrompt, validateSummary } from "./summarySchema.ts";
@@ -193,6 +194,9 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
     // never block compaction: accept it and say what is missing
     if (failures.length > 0) narrative = `${narrative}\n\n[checkpoint note: still failing after one retry: ${failures.join("; ")}]`;
   }
+  // the model drops earlier items when it rewrites the checkpoint; code
+  // carries them forward, and the merged text is the next round's prior
+  if (!drainedNothing && previous?.narrative.trim()) narrative = carryDroppedItems(previous.narrative, narrative);
 
   return {
     ledger,

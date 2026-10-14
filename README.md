@@ -71,6 +71,10 @@ summary with its ledger, so summaries are never compacted into summaries.
 non-empty, not cut off by the output limit, and a Next step that names a
 modified file or command when the ledger has any. On failure it asks once
 more, then accepts the result with a note listing what is still missing.
+Then `core/carry.ts` compares it with the previous narrative: decisions,
+findings and failed approaches the model dropped are appended to their
+section under "Carried from earlier windows:", capped at 3,000 tokens with
+the oldest dropped first.
 
 ### Between compactions
 
