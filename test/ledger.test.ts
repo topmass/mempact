@@ -16,6 +16,18 @@ const result = (id: string, toolName: string, text: string) => ({
 });
 
 describe("buildLedger", () => {
+  it("drops a write or edit whose tool result was an error", () => {
+    const ledger = buildLedger([
+      call("a", "edit", { path: "src/a.ts" }),
+      { ...result("a", "edit", "File not found"), isError: true },
+      call("b", "edit", { path: "src/b.ts" }),
+      result("b", "edit", "ok"),
+      call("c", "edit", { path: "src/a.ts" }),
+      result("c", "edit", "ok"),
+    ]);
+    expect(ledger.modifiedFiles).toEqual(["src/b.ts", "src/a.ts"]);
+  });
+
   it("collects files, commands, constraints, anchors and the latest request with source indexes", () => {
     const ledger = buildLedger([
       user("Fix PR #1234. Never use npm in this repo."),

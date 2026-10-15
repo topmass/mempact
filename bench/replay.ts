@@ -70,10 +70,17 @@ export async function chat(ep: Endpoint, body: Record<string, unknown>): Promise
   }
 }
 
+/** MEMPACT_BENCH_SUMMARY_TEMPERATURE samples the summaries, so repeated
+ *  runs with --reuse-probes measure summarizer variance; MEMPACT_BENCH_SEED
+ *  tells the repeats apart. Probes, answers and judging stay at 0. */
+const SUMMARY_SAMPLING = process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE
+  ? { temperature: Number(process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE), seed: Number(process.env.MEMPACT_BENCH_SEED ?? 0) }
+  : {};
+
 export const endpointSummarize =
   (ep: Endpoint) =>
   async (systemPrompt: string, messages: Message[], maxTokens: number): Promise<string> =>
-    (await chat(ep, { messages: toChat(systemPrompt, messages), max_tokens: maxTokens })).content ?? "";
+    (await chat(ep, { messages: toChat(systemPrompt, messages), max_tokens: maxTokens, ...SUMMARY_SAMPLING })).content ?? "";
 
 const NO_THINKING = { chat_template_kwargs: { enable_thinking: false } };
 

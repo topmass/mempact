@@ -28,18 +28,22 @@ const pushUnique = (list: string[], p: string): void => {
 };
 
 /** Extract read/modified file paths from assistant toolCall blocks. */
-export function collectFileOps<M extends { role: string; content?: unknown }>(messages: readonly M[]): FileOpLists {
+export function collectFileOps<M extends { role: string; content?: unknown; toolCallId?: string; isError?: boolean }>(
+  messages: readonly M[],
+): FileOpLists {
   const readFiles: string[] = [];
   const modifiedFiles: string[] = [];
+  // a write or edit whose result was an error changed nothing
+  const failed = new Set(messages.filter((m) => m.role === "toolResult" && m.isError).map((m) => m.toolCallId));
   for (const m of messages) {
     if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
-    for (const block of m.content as { type: string; name?: string; arguments?: Record<string, unknown> }[]) {
+    for (const block of m.content as { type: string; id?: string; name?: string; arguments?: Record<string, unknown> }[]) {
       if (block.type !== "toolCall" || !block.name) continue;
       const path = pathOf(block.arguments ?? {});
       if (!path) continue;
       const name = block.name.toLowerCase();
       if (name === "read") pushUnique(readFiles, path);
-      else if (name === "write" || name === "edit") pushUnique(modifiedFiles, path);
+      else if ((name === "write" || name === "edit") && !failed.has(block.id)) pushUnique(modifiedFiles, path);
     }
   }
   return {

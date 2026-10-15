@@ -43,6 +43,8 @@ MEMPACT_BENCH_BASE_URL=... pnpm bench --transcripts list.txt --window 65536 --ma
 
 `--conditions` picks which conditions run (default all four). Without `--reuse-probes` a session whose JSON exists is skipped. With it, the bench reruns that session at the saved round boundaries with the saved probes, recomputes rows, answers and actions for the listed conditions, keeps the rest, and overwrites the JSON. Use the same `--window` and `--max-rounds` as the saved run.
 
+Requests run at temperature 0. Set `MEMPACT_BENCH_SUMMARY_TEMPERATURE` (and `MEMPACT_BENCH_SEED` to tell repeats apart) to sample only the summaries, so repeated `--reuse-probes` runs on the same sessions measure summarizer variance. Probes, answers and judging stay at 0.
+
 With no `MEMPACT_BENCH_BASE_URL`, a deterministic fake summarizer stands in for the model. It copies the first 300 characters of each user message into the narrative headings. Offline numbers test the harness and mempact's code-built ledger. They say nothing about summary quality. If `MEMPACT_BENCH_MODEL` is unset, the bench uses the first id from `GET /models`.
 
 Each run writes `bench/results/<fixture>-<model>-<date>.csv` with one row per condition, round and metric, and prints a markdown table. The `full` rows hold the boundary index, the raw token count, and the replay reference's re-reads and re-runs.
