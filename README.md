@@ -151,17 +151,16 @@ The offline CSVs in `bench/results/` use a fake summarizer and only show
 the ledger property: on the small and large fixtures mempact kept 100% of
 planted files and live constraints across all three rounds.
 
-`bench/results/live-llamacpp-2026-10-14.csv` is a live run on three real
+`bench/results/live-llamacpp-2026-10-15.csv` is a live run on three real
 Claude Code sessions (120k to 210k tokens each) with a local Qwen3.8-27B,
 a 64k window and five compaction rounds. At each boundary the model writes
 probes from the drained messages, every condition answers all probes so
 far, and the model grades the answers. Averaged over all five rounds,
-mempact ties pi (+0.01, 95% CI -0.01 to +0.02) and beats ledger-only by
-0.11 and the codex prompt by 0.17. Mempact leads in rounds 4 and 5 and on
-every probe older than one round. Pi still answers fresh rationale
-questions better, and those sources sit a median 27k tokens before the
-boundary, outside both tails. Three sessions and one model is a small
-sample. Treat the overall score as a tie.
+mempact scores 0.05 above pi (95% CI -0.01 to +0.10), 0.16 above
+ledger-only and 0.21 above the codex prompt, and leads pi in every round.
+The 2026-10-14 CSV is the same run before the summarizer prompt changes,
+when mempact and pi tied. Three sessions and one model is a small sample,
+and the interval against pi still touches zero.
 
 ## Using the core in other frameworks
 
