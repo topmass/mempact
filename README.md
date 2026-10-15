@@ -147,11 +147,21 @@ after compaction matches the one it picks with full history. See
 [bench/README.md](bench/README.md) for the metrics, how to run it, and its
 limits.
 
-The results in `bench/results/` come from an offline run with a fake
-summarizer. They show the ledger property: on the small and large
-fixtures, mempact kept 100% of planted files and live constraints across
-all three rounds. They say nothing about summary quality. No live model run
-has been checked in yet.
+The offline CSVs in `bench/results/` use a fake summarizer and only show
+the ledger property: on the small and large fixtures mempact kept 100% of
+planted files and live constraints across all three rounds.
+
+`bench/results/live-llamacpp-2026-10-14.csv` is a live run on three real
+Claude Code sessions (120k to 210k tokens each) with a local Qwen3.8-27B,
+a 64k window and five compaction rounds. At each boundary the model writes
+probes from the drained messages, every condition answers all probes so
+far, and the model grades the answers. Averaged over all five rounds,
+mempact ties pi (+0.01, 95% CI -0.01 to +0.02) and beats ledger-only by
+0.11 and the codex prompt by 0.17. Mempact leads in rounds 4 and 5 and on
+every probe older than one round. Pi still answers fresh rationale
+questions better, and those sources sit a median 27k tokens before the
+boundary, outside both tails. Three sessions and one model is a small
+sample. Treat the overall score as a tie.
 
 ## Using the core in other frameworks
 
@@ -182,7 +192,8 @@ memory helpers in `core/memory.ts`, and the recall helpers in
 ## Not here on purpose
 
 - No post-compaction quiz or self-check by the model.
-- No measured-quality claims until live benchmark results are checked in.
+- No graph memory. The live bench shows the losses are in summary capture,
+  not in how the facts are stored.
 
 ## Development
 
