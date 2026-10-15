@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mempact</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #ffffff;
+  --plane: oklch(0.982 0.003 95);
+  --border: #dcdbd5;
+  --hairline: #e6e5df;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #6f6e69;
+  --grid: #e8e7e1;
+  --axis: #c3c2b7;
+  --s-mempact: #2a78d6;
+  --s-pi: #eb6834;
+  --s-ledger: #1baf7a;
+  --s-codex: #eda100;
+  --code-bg: oklch(0.955 0 none);
+  --code-ink: #3d3c39;
+  --model-bg: oklch(0.95 0.03 255);
+  --model-ink: #1c5cab;
+  --model-edge: oklch(0.86 0.06 255);
+}
+html, body { margin: 0; background: transparent; }
+body { inline-size: 1000px; }
+.card {
+  box-sizing: border-box;
+  inline-size: 1000px;
+  padding: 44px 48px 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+h1 { margin: 0; font-size: 44px; font-weight: 700; line-height: 1.15; letter-spacing: -0.015em; text-wrap: balance; }
+.sub { margin: 12px 0 0; font-size: 26px; line-height: 1.35; color: var(--ink-2); text-wrap: pretty; }
+.note { margin: 20px 0 0; font-size: 22px; line-height: 1.4; color: var(--ink-2); }
+svg { display: block; font-family: inherit; overflow: visible; }
+.tick { font-size: 22px; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tag {
+  display: inline-block;
+  padding: 1px 12px;
+  border-radius: 999px;
+  font-size: 20px; font-weight: 600; line-height: 1.4;
+  border: 1px solid var(--border);
+  background: var(--code-bg); color: var(--code-ink);
+}
+.tag.model { background: var(--model-bg); color: var(--model-ink); border-color: var(--model-edge); }
+
+.wordmark { font-size: 84px; font-weight: 750; line-height: 1; letter-spacing: -0.035em; }
+.claim { margin: 20px 0 0; font-size: 26px; line-height: 1.38; color: var(--ink); text-wrap: pretty; }
+.facts { display: flex; flex-wrap: wrap; gap: 12px; list-style: none; margin: 28px 0 0; padding: 0; }
+.facts li {
+  font-size: 22px; line-height: 1.3; color: var(--ink-2);
+  padding: 6px 16px; border-radius: 999px; border: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+<div class="card">
+<h1 class="wordmark">mempact</h1>
+<p class="claim">Context compaction for coding agents. On 12 real sessions it kept more of what the next window needed than pi's own compaction, in every session.</p>
+<ul class="facts">
+  <li>Drop-in pi extension</li>
+  <li>TypeScript core, no runtime dependencies</li>
+  <li>Apache-2.0</li>
+</ul>
+</div>
+</body>
+</html>
