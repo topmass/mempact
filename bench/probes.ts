@@ -7,7 +7,7 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
-import { serializeConversation } from "@earendil-works/pi-coding-agent";
+import { estimateTokens, serializeConversation } from "@earendil-works/pi-coding-agent";
 import { OverflowError } from "../core/pipeline.ts";
 import { userMessage } from "./conditions.ts";
 
@@ -59,13 +59,21 @@ export async function generateProbes(ask: Ask, drained: Message[], round: number
     const transcript = `<transcript>\n${serializeConversation(drained)}\n</transcript>\n\n${PROBE_PROMPT}`;
     return parseProbes(await ask(PROBE_SYSTEM, [userMessage(transcript)], 2048), round);
   } catch (error) {
-    if (error instanceof OverflowError) return [];
+    if (error instanceof OverflowError) {
+      console.error(`probes: round ${round} overflow (${drained.reduce((n, m) => n + estimateTokens(m), 0)} slice tokens)`);
+      return [];
+    }
     throw error;
   }
 }
 
 const ANSWER_SYSTEM = "You are a coding agent resuming a session. Answer questions about the session from the conversation only.";
 const JUDGE_SYSTEM = "You grade answers. Reply with exactly one word: correct, partial or wrong.";
+
+export let judgeUnparsed = 0;
+export function resetJudgeUnparsed() {
+  judgeUnparsed = 0;
+}
 
 export async function judge(ask: Ask, question: string, reference: string, candidate: string, criterion = "Does the candidate answer agree with the reference answer?"): Promise<Verdict> {
   if (!candidate.trim() || /^\W*unknown\b/i.test(candidate)) return "wrong";
@@ -74,7 +82,11 @@ export async function judge(ask: Ask, question: string, reference: string, candi
     [userMessage(`Question: ${question}\nReference: ${reference}\nCandidate: ${candidate}\n\n${criterion} Reply correct, partial (right but missing part of the reference), or wrong (contradicts it, or does not answer).`)],
     16,
   );
-  return (/\b(correct|partial|wrong)\b/i.exec(reply)?.[1]?.toLowerCase() as Verdict | undefined) ?? "wrong";
+  const verdict = /\b(correct|partial|wrong)\b/i.exec(reply)?.[1]?.toLowerCase() as Verdict | undefined;
+  if (verdict) return verdict;
+  judgeUnparsed++;
+  console.error(`judge: unparsed reply ${JSON.stringify(reply.slice(0, 80))}`);
+  return "wrong";
 }
 
 /** Answer every probe back to back against one context (the server's prefix

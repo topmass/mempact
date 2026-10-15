@@ -6,6 +6,7 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
+import { Agent, fetch, Response } from "undici";
 import { OverflowError } from "../core/pipeline.ts";
 import { collectCommands } from "../core/runFacts.ts";
 import { contentText } from "../core/items.ts";
@@ -55,14 +56,28 @@ interface ChatMessage {
   tool_calls?: { function: { name: string; arguments: string } }[];
 }
 
+const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+export let repliesCut = 0;
+export function resetRepliesCut() {
+  repliesCut = 0;
+}
+
 export async function chat(ep: Endpoint, body: Record<string, unknown>): Promise<ChatMessage> {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${ep.baseUrl}/chat/completions`, {
       method: "POST",
       headers: headers(ep),
       body: JSON.stringify({ model: ep.model, temperature: 0, ...body }),
+      dispatcher,
     }).catch((error: unknown) => error as Error);
-    if (res instanceof Response && res.ok) return ((await res.json()) as { choices: { message: ChatMessage }[] }).choices[0]!.message;
+    if (res instanceof Response && res.ok) {
+      const reply = (await res.json()) as { choices: { message: ChatMessage; finish_reason?: string }[]; usage?: { prompt_tokens?: number } };
+      if (reply.choices[0]!.finish_reason === "length") {
+        repliesCut++;
+        console.error(`chat: reply cut at max_tokens (${reply.usage?.prompt_tokens ?? "unknown"} tokens in)`);
+      }
+      return reply.choices[0]!.message;
+    }
     const detail = res instanceof Response ? `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` : res.message;
     if (res instanceof Response && res.status === 400 && /context|too long|exceed|n_ctx|maximum/i.test(detail)) throw new OverflowError(detail);
     if (attempt >= 3) throw new Error(`chat completions failed: ${detail}`);
@@ -73,8 +88,8 @@ export async function chat(ep: Endpoint, body: Record<string, unknown>): Promise
 /** MEMPACT_BENCH_SUMMARY_TEMPERATURE samples the summaries, so repeated
  *  runs with --reuse-probes measure summarizer variance; MEMPACT_BENCH_SEED
  *  tells the repeats apart. Probes, answers and judging stay at 0. */
-const SUMMARY_SAMPLING = process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE
-  ? { temperature: Number(process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE), seed: Number(process.env.MEMPACT_BENCH_SEED ?? 0) }
+export const SUMMARY_SAMPLING = process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE !== undefined
+  ? { temperature: Number(process.env.MEMPACT_BENCH_SUMMARY_TEMPERATURE), seed: process.env.MEMPACT_BENCH_SEED === undefined ? Math.floor(Math.random() * 2 ** 31) : Number(process.env.MEMPACT_BENCH_SEED) }
   : {};
 
 export const endpointSummarize =

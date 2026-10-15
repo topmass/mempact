@@ -26,10 +26,11 @@ import { NARRATIVE_SECTIONS } from "../core/summarySchema.ts";
 import { type BenchDeps, CONDITIONS } from "./conditions.ts";
 import { FIXTURES, type Fixture, generateFixture } from "./fixtures/generate.ts";
 import { importTranscript } from "./import.ts";
-import { type Ask, type Probe, type Verdict, VERDICT_SCORE, generateProbes, judge, probeMetrics, scoreProbes } from "./probes.ts";
+import { type Ask, type Probe, type Verdict, VERDICT_SCORE, generateProbes, judge, judgeUnparsed, resetJudgeUnparsed, probeMetrics, scoreProbes } from "./probes.ts";
 import {
   type Endpoint,
   type NextAction,
+  SUMMARY_SAMPLING,
   actionOf,
   endpointAsk,
   endpointFromEnv,
@@ -37,6 +38,8 @@ import {
   firstModel,
   nextAction,
   repeats,
+  repliesCut,
+  resetRepliesCut,
   transcriptTools,
 } from "./replay.ts";
 import { contextText, scoreContext } from "./score.ts";
@@ -97,6 +100,8 @@ export async function runBench(opts: {
   saved?: BenchResult;
   log?: (line: string) => void;
 }): Promise<BenchResult> {
+  resetRepliesCut();
+  resetJudgeUnparsed();
   const { messages, facts } = opts.fixture;
   const ask = opts.ask;
   // a real transcript's own next turn is the replay reference, offered its own tools
@@ -136,6 +141,7 @@ export async function runBench(opts: {
     if (ask && !facts) {
       const t = Date.now();
       const fresh = saved ? saved.probes.filter((p) => p.round === round) : await generateProbes(ask, messages.slice(drainedFrom, b), round);
+      if (!saved && fresh.length === 0) add("full", round, { probes_failed: 1 });
       probes.push(...fresh);
       opts.log?.(`  probes: ${fresh.length} new, ${probes.length} total (${since(t)})`);
     }
@@ -172,7 +178,15 @@ export async function runBench(opts: {
         cost.summarizer_output_tokens += Math.ceil(text.length / 4);
         return text;
       };
-      const r = await CONDITIONS[c](history, st[c]!.state, { summarize, estimateTokens, contextWindow: opts.window, maxOutputTokens: MAX_OUTPUT_TOKENS });
+      let r: Awaited<ReturnType<(typeof CONDITIONS)[typeof c]>>;
+      try {
+        r = await CONDITIONS[c](history, st[c]!.state, { summarize, estimateTokens, contextWindow: opts.window, maxOutputTokens: MAX_OUTPUT_TOKENS });
+      } catch (error) {
+        if (!(error instanceof OverflowError)) throw error;
+        console.error(`  ${c}: round ${round} compaction failed: ${error.message}`);
+        add(c, round, { compaction_failed: 1 });
+        continue;
+      }
       st[c] = { context: r.contextAfter, state: r.state };
       add(c, round, { ...(facts ? scoreContext(contextText(r.contextAfter), facts, b) : {}), context_tokens: tokens(r.contextAfter), ...cost });
       if (opts.replay) {
@@ -194,11 +208,13 @@ export async function runBench(opts: {
     }
     opts.log?.(`round ${round} done in ${since(roundStart)}`);
   }
+  const sessionMetrics = new Set(["replies_cut", "judge_unparsed"]);
+  if (round > 0) add("full", round, { replies_cut: repliesCut, judge_unparsed: judgeUnparsed });
   if (!saved) return { rows, probes, answers, actions };
   // keep the saved boundary rows and the conditions not rerun
   const kept = <T extends { condition: string }>(xs: T[]) => xs.filter((x) => !(names as string[]).includes(x.condition));
   return {
-    rows: [...kept(saved.rows), ...rows.filter((r) => r.condition !== "full")].sort((x, y) => x.round - y.round),
+    rows: [...kept(saved.rows).filter((r) => r.condition !== "full" || !sessionMetrics.has(r.metric)), ...rows.filter((r) => r.condition !== "full" || sessionMetrics.has(r.metric))].sort((x, y) => x.round - y.round),
     probes: saved.probes,
     answers: [...kept(saved.answers), ...answers],
     actions: [...kept(saved.actions), ...actions],
@@ -228,6 +244,10 @@ const COLUMNS: [string, string][] = [
   ["reread", "re-read"],
   ["rerun", "re-run"],
   ["replay_skipped", "ref skipped"],
+  ["compaction_failed", "compaction failed"],
+  ["probes_failed", "probes failed"],
+  ["replies_cut", "replies cut"],
+  ["judge_unparsed", "judge unparsed"],
 ];
 const RATES = new Set([
   "files",
@@ -304,15 +324,23 @@ async function main() {
     const jsonFile = join(live, `${basename(source, ".jsonl")}.json`);
     let saved: BenchResult | undefined;
     if (isTranscript && existsSync(jsonFile)) {
-      const file = JSON.parse(readFileSync(jsonFile, "utf8")) as Partial<BenchResult> & { error?: string };
+      const file = JSON.parse(readFileSync(jsonFile, "utf8")) as Partial<BenchResult> & { error?: string; window?: number; trigger?: number };
       if (!values["reuse-probes"] || file.error || !file.rows?.length) {
         console.error(`skip ${source}: ${jsonFile} exists${values["reuse-probes"] ? " with no rounds to reuse" : ""}`);
+        continue;
+      }
+      if (file.window !== Number(values.window) || file.trigger !== Number(values.trigger)) {
+        console.error(`skip ${source}: saved window ${file.window} and trigger ${file.trigger} differ from current window ${values.window} and trigger ${values.trigger}`);
         continue;
       }
       saved = { rows: file.rows, probes: file.probes ?? [], answers: file.answers ?? [], actions: file.actions ?? [] };
     }
     const started = Date.now();
-    const meta = { name: basename(source, ".jsonl"), source, model, window: Number(values.window), trigger: Number(values.trigger) };
+    const meta = {
+      name: basename(source, ".jsonl"), source, model, window: Number(values.window), trigger: Number(values.trigger),
+      summaryTemperature: SUMMARY_SAMPLING.temperature, seed: SUMMARY_SAMPLING.seed,
+      ...(process.env.MEMPACT_BENCH_LABEL !== undefined ? { label: process.env.MEMPACT_BENCH_LABEL } : {}),
+    };
     let result: BenchResult;
     let fixture: Fixture;
     try {

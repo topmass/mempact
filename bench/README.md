@@ -41,13 +41,37 @@ node --experimental-strip-types bench/aggregate.ts   # per-round means, paired m
 MEMPACT_BENCH_BASE_URL=... pnpm bench --transcripts list.txt --window 65536 --max-rounds 5 --replay --conditions mempact --reuse-probes
 ```
 
-`--conditions` picks which conditions run (default all four). Without `--reuse-probes` a session whose JSON exists is skipped. With it, the bench reruns that session at the saved round boundaries with the saved probes, recomputes rows, answers and actions for the listed conditions, keeps the rest, and overwrites the JSON. Use the same `--window` and `--max-rounds` as the saved run.
+`--conditions` picks which conditions run (default all four). Without `--reuse-probes` a session whose JSON exists is skipped. With it, the bench reruns that session at the saved round boundaries with the saved probes, recomputes rows, answers and actions for the listed conditions, keeps the rest, and overwrites the JSON. The bench skips reuse when the saved window or trigger differs from the current flags. Use the same `--max-rounds` as the saved run.
 
-Requests run at temperature 0. Set `MEMPACT_BENCH_SUMMARY_TEMPERATURE` (and `MEMPACT_BENCH_SEED` to tell repeats apart) to sample only the summaries, so repeated `--reuse-probes` runs on the same sessions measure summarizer variance. Probes, answers and judging stay at 0.
+Requests run at temperature 0. Set `MEMPACT_BENCH_SUMMARY_TEMPERATURE` to sample only the summaries. Set `MEMPACT_BENCH_SEED` to reproduce those summaries. Without an explicit seed, sampled summaries use a random seed per process. Probes, answers and judging stay at 0. Each session records `summaryTemperature` and `seed` when sampling is enabled.
+
+Set `MEMPACT_BENCH_LABEL` to a readable model name when the server uses an alias such as `llamacpp`. Each session saves the label. The aggregate uses the label as the model name in tables and CSV files.
 
 With no `MEMPACT_BENCH_BASE_URL`, a deterministic fake summarizer stands in for the model. It copies the first 300 characters of each user message into the narrative headings. Offline numbers test the harness and mempact's code-built ledger. They say nothing about summary quality. If `MEMPACT_BENCH_MODEL` is unset, the bench uses the first id from `GET /models`.
 
 Each run writes `bench/results/<fixture>-<model>-<date>.csv` with one row per condition, round and metric, and prints a markdown table. The `full` rows hold the boundary index, the raw token count, and the replay reference's re-reads and re-runs.
+
+The bench also records these failures:
+
+- `compaction_failed`: 1 for a condition and round when compaction overflows. The condition keeps its previous state and context. The session continues with the other conditions.
+- `probes_failed`: 1 under `full` when a fresh round produces no probes. Probe overflow logs the round and slice token count.
+- `replies_cut`: the session count of replies whose `finish_reason` is `length`. Each cut reply logs its input token count.
+- `judge_unparsed`: the session count of judge replies with no verdict word. Each reply counts as wrong and logs its first 80 characters.
+
+The last two metrics use `full` at the last round. The bench resets both counters for each session. During reuse, these counters cover the new calls and replace the saved counters.
+
+The aggregate accepts one or more result directories. The default is `bench/results/live`.
+
+```bash
+node --experimental-strip-types bench/aggregate.ts bench/results/repeat-1 bench/results/repeat-2
+```
+
+Each directory must contain one model, window and trigger. Repeats must share those settings. The aggregate reports the first mismatch and exits.
+For each directory, it prints per-round means and paired mempact comparisons. Each comparison includes a two-sided sign test that excludes ties. It also compares each session's final round. Bootstrap intervals use 10,000 resamples of sessions.
+
+With several directories, the aggregate pools sessions present in every directory and lists excluded sessions. It averages each session's gain across repeats before bootstrapping those session means. The pooled table compares mempact with each other condition. Each comparison also reports the repeat variation within sessions and the variation between session means. The first value is the square root of the mean sample variance across repeats. The second value is the sample standard deviation of the pooled session means.
+
+The aggregate writes `bench/results/live-<label>-w<window>-<date>.csv`, using the model ID when no label exists. The output sits beside the first input directory. The CSV includes each repeat and the pooled comparisons. Its `seed` column holds the saved seed for repeat rows and `pooled` for pooled rows. The seed stays empty for older files or runs without summary sampling.
 
 Fixtures: `bench/fixtures/{small,medium,large}.json` (about 64k, 147k and 401k tokens) come from `bench/fixtures/generate.ts` with fixed seeds. Regenerate them with `node --experimental-strip-types bench/fixtures/generate.ts`. `bench/import.ts` converts a Claude Code or pi transcript. Imported sessions have no planted facts, so only cost and replay apply. Do not commit real transcripts.
 
@@ -58,4 +82,4 @@ Fixtures: `bench/fixtures/{small,medium,large}.json` (about 64k, 147k and 401k t
 - Substring scoring misses paraphrases that the keys do not cover, which favors conditions that quote verbatim.
 - The replay metric depends on the model, its sampling (requests use temperature 0), and how well it handles tool calls.
 - mempact's rehydrated files, project memory and old-tool-output clearing are left out, because they need a real disk and a live session.
-- Node's fetch gives up after 300 seconds without response headers. A slow local model on a near-full 128k prompt can hit that limit.
+- Chat requests use undici with no header or body timeout, so long prefills can finish.
