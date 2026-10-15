@@ -173,7 +173,7 @@ estimate:
 import { compactWindow, OverflowError } from "./core/index.ts";
 
 const result = await compactWindow(
-  { messages, previous, contextWindow, maxOutputTokens, systemPrompt, instructions },
+  { messages, previous, contextWindow, maxOutputTokens, instructions },
   {
     // throw OverflowError when the request does not fit the window
     summarize: (systemPrompt, messages, maxTokens) => Promise<string>,

@@ -48,13 +48,16 @@ export interface CompactWindowInput {
   previous?: { narrative: string; start: number };
   contextWindow: number;
   maxOutputTokens: number;
-  /** the agent's own system prompt, sent with the summary call. The call
-   *  sends no tools, so on Anthropic it does not share the agent's cache
-   *  prefix (tools come before the system prompt in cache order). */
-  systemPrompt?: string;
   /** extra user instructions, e.g. from `/compact <text>` */
   instructions?: string;
 }
+
+/** pi's summarizer system prompt. The summary call gets this instead of the
+ *  agent's own prompt, so the model summarizes the conversation rather than
+ *  continuing it. */
+export const SUMMARIZER_SYSTEM_PROMPT =
+  "You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.\n\n" +
+  "Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.";
 
 export interface CompactWindowDeps {
   summarize: (systemPrompt: string, messages: Message[], maxTokens: number) => Promise<string>;
@@ -163,7 +166,7 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
   // then loses its oldest messages until the request fits.
   const prompt = narrativePrompt(ledgerBlock, input.instructions);
   const sum = (msgs: Message[]) => msgs.reduce((n, m) => n + deps.estimateTokens(m), 0);
-  const room = input.contextWindow - maxTokens - sum([userMessage(input.systemPrompt ?? ""), ...prior, userMessage(prompt)]);
+  const room = input.contextWindow - maxTokens - sum([userMessage(SUMMARIZER_SYSTEM_PROMPT), ...prior, userMessage(prompt)]);
   if (sum(history) > room) {
     history = clearOldToolOutputs(history, KEEP_RECENT_TOOL_RESULTS).messages;
     history = history.slice(tailStartIndex(history, 0, room, deps.estimateTokens));
@@ -172,7 +175,7 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
   const ask = async (text: string): Promise<string> => {
     for (;;) {
       try {
-        return (await deps.summarize(input.systemPrompt ?? "", [...prior, ...history, userMessage(text)], maxTokens)).trim();
+        return (await deps.summarize(SUMMARIZER_SYSTEM_PROMPT, [...prior, ...history, userMessage(text)], maxTokens)).trim();
       } catch (error) {
         // codex compact.rs front-trim, a tenth at a time instead of one
         // message per call
@@ -184,8 +187,9 @@ export async function compactWindow(input: CompactWindowInput, deps: CompactWind
 
   let narrative = drainedNothing ? (previous?.narrative.trim() ?? "") : await ask(prompt);
   let failures = drainedNothing ? [] : validateSummary(narrative, ledger);
-  // a retry cannot fix an empty reply or a cut alone: it gets the same output cap
-  const retried = narrative !== "" && failures.some((f) => f !== TRUNCATED_FAILURE);
+  // a retry cannot fix a cut alone: it gets the same output cap. An empty
+  // reply (a model that spent its output on thinking) is retried.
+  const retried = failures.some((f) => f !== TRUNCATED_FAILURE);
   if (retried) {
     narrative = await ask(
       `${prompt}\n\nYour previous checkpoint had these problems. Write the whole checkpoint again without them:\n${failures.map((f) => `- ${f}`).join("\n")}`,

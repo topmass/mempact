@@ -364,7 +364,6 @@ export default function (pi: ExtensionAPI) {
           previous,
           contextWindow: model.contextWindow,
           maxOutputTokens: model.maxTokens,
-          systemPrompt: ctx.getSystemPrompt(),
           instructions: event.customInstructions,
         },
         {

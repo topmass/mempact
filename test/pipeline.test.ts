@@ -76,6 +76,9 @@ describe("compactWindow", () => {
     expect(fixed.calls).toHaveLength(2);
     expect(flat(fixed.calls[1]!)).toContain('missing section \\"Goal\\"');
 
+    const empty = run(["", good]);
+    expect((await empty.out).validation).toEqual({ failures: [], retried: true });
+
     const still = run(["bad", "still bad"]);
     const r = await still.out;
     expect(still.calls).toHaveLength(2);
