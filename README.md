@@ -11,8 +11,11 @@ core that any harness can call.
 
 ## Results
 
+With mempact's compaction, the model answered about 20% more questions
+right than with pi's, over 36 real coding sessions.
+
 <p align="center">
-  <img src="assets/results.png" alt="Measured results: mempact gains 0.11 over pi, beats pi in 29 of 36 sessions, and leads in every compaction round" width="100%">
+  <img src="assets/results.png" alt="Measured results: mempact answers 20% more questions right than pi, beats pi in 29 of 36 sessions, and tried to search or read a file instead of answering 12 times against pi's 55. A line chart shows questions answered right falling over five compaction rounds from 72% to 49% for mempact, 55% to 47% for pi, 66% to 37% for the ledger alone and 57% to 27% for the codex prompt." width="100%">
 </p>
 
 The benchmark replays 36 real Claude Code sessions through four compaction
@@ -21,30 +24,42 @@ up to five compactions, which covers its first 100k to 230k tokens. At each
 boundary the model reads the messages about to be dropped and writes the
 questions a resuming agent would need answered. Every rule then answers
 every question so far from its own compacted context, and the model grades
-the answers. Questions stay in the pool across rounds, so forgetting shows
-up as decay. One local model, Qwen3.6-35B-A3B, did all of it for all four
-rules.
+the answers. A half-right answer counts as half. Questions stay in the pool
+across rounds, so forgetting shows up as decay. One local model,
+Qwen3.6-35B-A3B, did all of it for all four rules.
 
 The whole benchmark ran four times, once with greedy summaries and three
-times with sampled ones. Pooled over the four runs, mempact scored 0.11
-higher than pi, with a 95% interval of 0.07 to 0.15. The single runs gave
-0.10, 0.12, 0.09 and 0.11, each within 0.02 of the pooled number. mempact
-also beat the ledger alone by 0.09 and the codex prompt by 0.19.
+times with sampled ones. Pooled over the four runs, pi answered 53% of the
+questions right per session, and mempact answered 11 percentage points
+more, with a 95% interval of 7 to 15 points. Each single run gave between
+9 and 12 points, and mempact beat pi in 29 of the 36 sessions. mempact also
+beat the ledger alone by 9 points and the codex prompt by 19.
 
 <p align="center">
-  <img src="assets/mempact-vs-pi-by-session.png" alt="Sorted bar chart of mempact's gain over pi on each of the 36 sessions, 29 above zero and 7 below" width="100%">
+  <img src="assets/mempact-vs-pi-by-session.png" alt="Sorted bar chart of mempact's gain over pi in percentage points of questions answered right on each of the 36 sessions, 29 bars above zero and 7 below, ranging from minus 14 to plus 47 points" width="100%">
 </p>
+
+Each rule gave 9,736 answers over the four runs. Counted over all of them,
+which weights the later and harder rounds more, 40% of mempact's answers
+were fully right against 32% of pi's, and 26% were wrong against 31%. The
+two rules said "unknown" about as often, 1,186 times for mempact and 1,239
+for pi, so mempact's extra right answers came from what its context held.
+Pi tried to run a search or read a file instead of answering 55 times, and
+mempact did that 12 times. The ledger alone got 33% fully right and 39%
+wrong, and the codex prompt got 25% right and 51% wrong, with 4,090
+"unknown" answers.
 
 Some caveats apply. Pi's prompt asks for concise sections, and this model
 took that literally, so in the first round pi wrote about a quarter as much
-summary as mempact. The lead also narrows as rounds go on, and on each
-session's final round mempact led pi by 0.06, with an interval of 0.03 to
-0.09. One model judged every answer, and all 36 sessions come from one
-user. Three sessions also ran at a 180k window with two to five compactions
-each, and mempact led pi there by 0.11 on average, from 0.08 to 0.15, but
-three sessions are too few to count as a result. The method, its limits and
-how to run it are in [bench/README.md](bench/README.md). The numbers are in
-`bench/results/`.
+summary as mempact. The lead is largest right after the first compaction,
+at 17 points, and shrinks to 2 points by the fifth, where both rules answer
+just under half the questions right. On each session's final round mempact
+led pi by 6 points, with an interval of 3 to 9. One model judged every
+answer, and all 36 sessions come from one user. Three sessions also ran at
+a 180k window with two to five compactions each, and mempact led pi there
+by 11 points on average, from 8 to 15, but three sessions are too few to
+count as a result. The method, its limits and how to run it are in
+[bench/README.md](bench/README.md). The numbers are in `bench/results/`.
 
 ## How it works
 
