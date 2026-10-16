@@ -58,7 +58,12 @@ led pi by 6 points, with an interval of 3 to 9. One model judged every
 answer, and all 36 sessions come from one user. Three sessions also ran at
 a 180k window with two to five compactions each, and mempact led pi there
 by 11 points on average, from 8 to 15, but three sessions are too few to
-count as a result. The method, its limits and how to run it are in
+count as a result. The only dense-model check so far is Qwen3.8-27B on
+three sessions at 64k with five compactions each. There both rules did far
+better, 90% against 79% right after the first compaction, mempact led by 5
+points over all rounds, from 1 behind to 13 ahead, and pi's summaries were
+nearly as long as mempact's, so the length caveat does not explain that
+lead. The method, its limits and how to run it are in
 [bench/README.md](bench/README.md). The numbers are in `bench/results/`.
 
 ## How it works
