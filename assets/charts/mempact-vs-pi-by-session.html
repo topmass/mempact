@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Every session, mempact against pi</title>
+<title>mempact beat pi in 29 of 36 sessions</title>
 <style>
 :root {
   color-scheme: light;
@@ -54,92 +54,73 @@ svg { display: block; font-family: inherit; overflow: visible; }
 }
 .tag.model { background: var(--model-bg); color: var(--model-ink); border-color: var(--model-edge); }
 
-.legend { display: flex; gap: 32px; margin: 28px 0 20px; font-size: 24px; }
-.legend span { display: inline-flex; align-items: center; gap: 10px; }
-.legend i { inline-size: 18px; block-size: 18px; border-radius: 50%; }
+.plot { margin-block-start: 36px; }
 </style>
 </head>
 <body>
 <div class="card">
-<h1>Every session, mempact against pi</h1>
-<p class="sub">Probe score per session, same model and window for both</p>
-<p class="legend"><span><i style="background:var(--s-pi)"></i>pi</span><span><i style="background:var(--s-mempact)"></i>mempact</span></p>
-<svg width="902" height="688" viewBox="0 0 902 688" role="img" aria-label="Dumbbell chart of probe score per session, pi against mempact, mempact ahead in all 12">
-<text class="tick" x="0" y="22" fill="var(--muted)" style="fill:var(--muted)">Session</text>
-<text class="tick" x="902" y="22" text-anchor="end" style="fill:var(--muted)">Gain</text>
-<line x1="160.0" x2="160.0" y1="38" y2="600" stroke="var(--grid)" stroke-width="1"/>
-<text class="tick" x="160.0" y="634" text-anchor="middle">0.3</text>
-<line x1="317.5" x2="317.5" y1="38" y2="600" stroke="var(--grid)" stroke-width="1"/>
-<text class="tick" x="317.5" y="634" text-anchor="middle">0.4</text>
-<line x1="475.0" x2="475.0" y1="38" y2="600" stroke="var(--grid)" stroke-width="1"/>
-<text class="tick" x="475.0" y="634" text-anchor="middle">0.5</text>
-<line x1="632.5" x2="632.5" y1="38" y2="600" stroke="var(--grid)" stroke-width="1"/>
-<text class="tick" x="632.5" y="634" text-anchor="middle">0.6</text>
-<line x1="790.0" x2="790.0" y1="38" y2="600" stroke="var(--grid)" stroke-width="1"/>
-<text class="tick" x="790.0" y="634" text-anchor="middle">0.7</text>
-<line x1="140" x2="810" y1="600" y2="600" stroke="var(--axis)" stroke-width="1"/>
-<text class="tick" x="475.0" y="676" text-anchor="middle">Probe score</text>
-<text x="0" y="71.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">ab7f575a</text>
-<line x1="648.2" x2="758.5" y1="64" y2="64" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="648.2" cy="64" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="758.5" cy="64" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="72.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.07</text>
-<text x="0" y="117.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">54254238</text>
-<line x1="538.0" x2="664.0" y1="110" y2="110" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="538.0" cy="110" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="664.0" cy="110" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="118.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.08</text>
-<text x="0" y="163.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">b67bcf9c</text>
-<line x1="427.7" x2="632.5" y1="156" y2="156" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="427.7" cy="156" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="632.5" cy="156" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="164.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.13</text>
-<text x="0" y="209.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">bfcefd34</text>
-<line x1="553.8" x2="632.5" y1="202" y2="202" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="553.8" cy="202" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="632.5" cy="202" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="210.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.05</text>
-<text x="0" y="255.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">9e4ebdbc</text>
-<line x1="601.0" x2="632.5" y1="248" y2="248" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="601.0" cy="248" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="632.5" cy="248" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="256.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.02</text>
-<text x="0" y="301.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">a7af374b</text>
-<line x1="553.8" x2="616.8" y1="294" y2="294" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="553.8" cy="294" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="616.8" cy="294" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="302.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.04</text>
-<text x="0" y="347.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">f78d4ec7</text>
-<line x1="364.8" x2="538.0" y1="340" y2="340" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="364.8" cy="340" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="538.0" cy="340" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="348.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.11</text>
-<text x="0" y="393.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">6003ba06</text>
-<line x1="349.0" x2="522.2" y1="386" y2="386" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="349.0" cy="386" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="522.2" cy="386" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="394.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.11</text>
-<text x="0" y="439.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">aa7c8710</text>
-<line x1="191.5" x2="427.7" y1="432" y2="432" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="191.5" cy="432" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="427.7" cy="432" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="440.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.15</text>
-<text x="0" y="485.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">28b2f2b0</text>
-<line x1="317.5" x2="427.7" y1="478" y2="478" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="317.5" cy="478" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="427.7" cy="478" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="486.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.07</text>
-<text x="0" y="531.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">ccd9abbc</text>
-<line x1="286.0" x2="396.2" y1="524" y2="524" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="286.0" cy="524" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="396.2" cy="524" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="532.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.07</text>
-<text x="0" y="577.5" style="font-size:22px;font-family:ui-monospace,'Noto Sans Mono','DejaVu Sans Mono',monospace" fill="var(--ink-2)">7c8dfbb2</text>
-<line x1="317.5" x2="396.2" y1="570" y2="570" stroke="var(--axis)" stroke-width="4" stroke-linecap="round"/>
-<circle cx="317.5" cy="570" r="9" fill="var(--s-pi)" stroke="var(--surface)" stroke-width="3"/>
-<circle cx="396.2" cy="570" r="9" fill="var(--s-mempact)" stroke="var(--surface)" stroke-width="3"/>
-<text x="902" y="578.5" text-anchor="end" style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums" fill="var(--ink)">+0.05</text>
+<h1>mempact beat pi in 29 of 36 sessions</h1>
+<p class="sub">Per-session gain in probe score, mean of four runs, 64k window, Qwen3.6-35B-A3B</p>
+<div class="plot">
+<svg width="902" height="596" viewBox="0 0 902 596" role="img" aria-label="Bar chart of the gain in probe score of mempact over pi on each of 36 sessions, sorted. 29 bars are above zero and 7 are below.">
+<text class="tick" x="0" y="20">Gain over pi</text>
+<line x1="64" x2="902" y1="538.0" y2="538.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="545.5" text-anchor="end">−0.2</text>
+<line x1="64" x2="902" y1="468.0" y2="468.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="475.5" text-anchor="end">−0.1</text>
+<line x1="64" x2="902" y1="398.0" y2="398.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="405.5" text-anchor="end">0.0</text>
+<line x1="64" x2="902" y1="328.0" y2="328.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="335.5" text-anchor="end">+0.1</text>
+<line x1="64" x2="902" y1="258.0" y2="258.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="265.5" text-anchor="end">+0.2</text>
+<line x1="64" x2="902" y1="188.0" y2="188.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="195.5" text-anchor="end">+0.3</text>
+<line x1="64" x2="902" y1="118.0" y2="118.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="125.5" text-anchor="end">+0.4</text>
+<line x1="64" x2="902" y1="48.0" y2="48.0" stroke="var(--grid)" stroke-width="1"/>
+<text class="tick" x="52" y="55.5" text-anchor="end">+0.5</text>
+<rect x="76.0" y="398.0" width="15" height="96.1" rx="2" fill="var(--muted)"/>
+<rect x="99.1" y="398.0" width="15" height="43.5" rx="2" fill="var(--muted)"/>
+<rect x="122.1" y="398.0" width="15" height="24.6" rx="2" fill="var(--muted)"/>
+<rect x="145.2" y="398.0" width="15" height="16.4" rx="2" fill="var(--muted)"/>
+<rect x="168.2" y="398.0" width="15" height="8.8" rx="2" fill="var(--muted)"/>
+<rect x="191.3" y="398.0" width="15" height="3.0" rx="2" fill="var(--muted)"/>
+<rect x="214.4" y="398.0" width="15" height="3.0" rx="2" fill="var(--muted)"/>
+<rect x="237.4" y="387.3" width="15" height="10.7" rx="2" fill="var(--s-mempact)"/>
+<rect x="260.5" y="384.0" width="15" height="14.0" rx="2" fill="var(--s-mempact)"/>
+<rect x="283.5" y="362.5" width="15" height="35.5" rx="2" fill="var(--s-mempact)"/>
+<rect x="306.6" y="360.6" width="15" height="37.4" rx="2" fill="var(--s-mempact)"/>
+<rect x="329.6" y="356.0" width="15" height="42.0" rx="2" fill="var(--s-mempact)"/>
+<rect x="352.7" y="352.9" width="15" height="45.1" rx="2" fill="var(--s-mempact)"/>
+<rect x="375.8" y="349.5" width="15" height="48.5" rx="2" fill="var(--s-mempact)"/>
+<rect x="398.8" y="343.3" width="15" height="54.7" rx="2" fill="var(--s-mempact)"/>
+<rect x="421.9" y="343.2" width="15" height="54.8" rx="2" fill="var(--s-mempact)"/>
+<rect x="444.9" y="340.6" width="15" height="57.4" rx="2" fill="var(--s-mempact)"/>
+<rect x="468.0" y="337.2" width="15" height="60.8" rx="2" fill="var(--s-mempact)"/>
+<rect x="491.0" y="335.9" width="15" height="62.1" rx="2" fill="var(--s-mempact)"/>
+<rect x="514.1" y="330.7" width="15" height="67.3" rx="2" fill="var(--s-mempact)"/>
+<rect x="537.1" y="329.6" width="15" height="68.4" rx="2" fill="var(--s-mempact)"/>
+<rect x="560.2" y="327.6" width="15" height="70.4" rx="2" fill="var(--s-mempact)"/>
+<rect x="583.3" y="318.4" width="15" height="79.6" rx="2" fill="var(--s-mempact)"/>
+<rect x="606.3" y="318.1" width="15" height="79.9" rx="2" fill="var(--s-mempact)"/>
+<rect x="629.4" y="307.8" width="15" height="90.2" rx="2" fill="var(--s-mempact)"/>
+<rect x="652.4" y="303.4" width="15" height="94.6" rx="2" fill="var(--s-mempact)"/>
+<rect x="675.5" y="299.0" width="15" height="99.0" rx="2" fill="var(--s-mempact)"/>
+<rect x="698.5" y="296.8" width="15" height="101.2" rx="2" fill="var(--s-mempact)"/>
+<rect x="721.6" y="276.1" width="15" height="121.9" rx="2" fill="var(--s-mempact)"/>
+<rect x="744.6" y="273.8" width="15" height="124.2" rx="2" fill="var(--s-mempact)"/>
+<rect x="767.7" y="267.4" width="15" height="130.6" rx="2" fill="var(--s-mempact)"/>
+<rect x="790.8" y="258.5" width="15" height="139.5" rx="2" fill="var(--s-mempact)"/>
+<rect x="813.8" y="219.5" width="15" height="178.5" rx="2" fill="var(--s-mempact)"/>
+<rect x="836.9" y="176.5" width="15" height="221.5" rx="2" fill="var(--s-mempact)"/>
+<rect x="859.9" y="67.1" width="15" height="330.9" rx="2" fill="var(--s-mempact)"/>
+<rect x="883.0" y="66.2" width="15" height="331.8" rx="2" fill="var(--s-mempact)"/>
+<line x1="64" x2="902" y1="398.0" y2="398.0" stroke="var(--ink-2)" stroke-width="1.5"/>
+<text class="tick" x="483.0" y="584" text-anchor="middle">Sessions, sorted by gain</text>
 </svg>
+</div>
+<p class="note">Each bar is one session. The gain is mempact's probe score minus pi's, averaged over every round of all four runs.</p>
 </div>
 </body>
 </html>

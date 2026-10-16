@@ -12,29 +12,39 @@ core that any harness can call.
 ## Results
 
 <p align="center">
-  <img src="assets/results.png" alt="Measured results: mempact gains 0.10 over pi, wins 12 of 12 sessions, and leads in every compaction round" width="100%">
+  <img src="assets/results.png" alt="Measured results: mempact gains 0.11 over pi, beats pi in 29 of 36 sessions, and leads in every compaction round" width="100%">
 </p>
 
-The benchmark replays twelve real Claude Code sessions, 187k to 437k
-tokens each, through four compaction rules at the same message boundaries
-with a 64k window. At each boundary the model reads the messages about to
-be dropped and writes the questions a resuming agent would need answered.
-Every rule then answers every question so far from its own compacted
-context, and the model grades the answers. Questions stay in the pool
-across rounds, so forgetting shows up as decay. One local model,
-Qwen3.6-35B-A3B, did all of it for all four rules.
+The benchmark replays 36 real Claude Code sessions through four compaction
+rules at the same message boundaries with a 64k window. Each session runs
+up to five compactions, which covers its first 100k to 230k tokens. At each
+boundary the model reads the messages about to be dropped and writes the
+questions a resuming agent would need answered. Every rule then answers
+every question so far from its own compacted context, and the model grades
+the answers. Questions stay in the pool across rounds, so forgetting shows
+up as decay. One local model, Qwen3.6-35B-A3B, did all of it for all four
+rules.
+
+The whole benchmark ran four times, once with greedy summaries and three
+times with sampled ones. Pooled over the four runs, mempact scored 0.11
+higher than pi, with a 95% interval of 0.07 to 0.15. The single runs gave
+0.10, 0.12, 0.09 and 0.11, each within 0.02 of the pooled number. mempact
+also beat the ledger alone by 0.09 and the codex prompt by 0.19.
 
 <p align="center">
-  <img src="assets/mempact-vs-pi-by-session.png" alt="mempact against pi on each of the twelve sessions, mempact ahead in all of them" width="100%">
+  <img src="assets/mempact-vs-pi-by-session.png" alt="Sorted bar chart of mempact's gain over pi on each of the 36 sessions, 29 above zero and 7 below" width="100%">
 </p>
 
-Two caveats. Pi's prompt asks for concise sections, and this model took
-that literally, so pi wrote about a third as much summary as mempact. In
-the three sessions where both wrote similar amounts, mempact still won, by
-0.02 to 0.11, and on an earlier run with Qwen3.8-27B it was 0.05 ahead.
-And twelve sessions with one judge model is a small sample. The method,
-its limits and how to run it are in [bench/README.md](bench/README.md).
-The numbers are in `bench/results/`.
+Some caveats apply. Pi's prompt asks for concise sections, and this model
+took that literally, so in the first round pi wrote about a quarter as much
+summary as mempact. The lead also narrows as rounds go on, and on each
+session's final round mempact led pi by 0.06, with an interval of 0.03 to
+0.09. One model judged every answer, and all 36 sessions come from one
+user. Three sessions also ran at a 180k window with two to five compactions
+each, and mempact led pi there by 0.11 on average, from 0.08 to 0.15, but
+three sessions are too few to count as a result. The method, its limits and
+how to run it are in [bench/README.md](bench/README.md). The numbers are in
+`bench/results/`.
 
 ## How it works
 
